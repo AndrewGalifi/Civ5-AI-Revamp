@@ -1,4 +1,4 @@
-# Strategic Planning Layer for Civilization V AI
+## Strategic Planning Layer for Civilization V AI
 
 An in-progress revamp of Civ5's AI, most notably making a strategy directive from a turn-by-turn game-state summary.
 
