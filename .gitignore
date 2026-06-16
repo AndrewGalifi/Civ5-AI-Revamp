@@ -1,0 +1,48 @@
+# Local editor / IDE state
+.vs/
+.vscode/
+*.suo
+*.user
+*.sdf
+*.opensdf
+*.VC.db
+ipch/
+
+# Local Codex/session state
+.codex/
+tmp/
+
+# Local path overrides
+local.paths.ps1
+
+# Build outputs
+CvGameCoreSource/BuildOutput/
+CvGameCoreSource/BuildTemp/
+**/Debug/
+**/Release/
+**/x64/
+*.obj
+*.pdb
+*.idb
+*.ilk
+*.ipdb
+*.iobj
+*.tlog
+*.lastbuildstate
+*.unsuccessfulbuild
+
+# Packaged artifacts should go in GitHub Releases, not git history
+*.dll
+*.zip
+*.7z
+*.rar
+
+# Local shortcuts and game logs
+*.lnk
+Logs/
+*.log
+/StrategyDirectiveAI*.csv
+
+# OS noise
+Thumbs.db
+Desktop.ini
