@@ -9,8 +9,9 @@ The core idea is:
 2. Select a `StrategyDirective` such as expansion, development, military response, treasury recovery, or happiness recovery.
 3. Apply scoped biases and/or hard pivots to existing AI subsystems (production, food, science, etc).
 
+Note: current source modifications only effect player1 for testing purposes
 
-# Repository Layout
+## Repository Layout
 
 - `CvGameCoreSource/` contains the Civ V SDK source tree.
 - `CvGameCoreSource/CvGameCoreDLL_Expansion2/` contains the main modified C++ code.
