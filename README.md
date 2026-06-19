@@ -54,13 +54,11 @@ The install step copies the latest built DLL into the local Civ V BNW DLL path.
 
 ## Local Test Loop
 
-For active development, build and install in one step:
+Build and install in one step:
 
 ```powershell
 .\dev_build_install.cmd
 ```
-
-This calls the normal build script first, then installs the resulting DLL with the normal install script. Use this when testing local working-tree changes before committing.
 
 To only build through the same wrapper:
 
@@ -70,7 +68,7 @@ To only build through the same wrapper:
 
 ## GitHub Actions
 
-`.github/workflows/civ5-local-runner.yml` is intended for a Windows self-hosted GitHub Actions runner that has Visual Studio/MSBuild installed.
+`.github/workflows/civ5-local-runner.yml` is for a Windows self-hosted GitHub Actions runner that has Visual Studio/MSBuild installed.
 
 Recommended runner labels:
 
