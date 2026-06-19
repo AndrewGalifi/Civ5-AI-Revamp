@@ -67,7 +67,9 @@ namespace
 			return iWonderWeight;
 		}
 
-		const StrategyDirective kDirective = pPlayer->GetGrandStrategyAI()->BuildStrategyDirective();
+		const StrategyState& kState = pPlayer->GetGrandStrategyAI()->GetStrategyState();
+
+		const StrategyDirective& kDirective = kState.m_kDirective;
 		if(kDirective.m_ePrimaryStrategy == PRIMARY_STRATEGY_EXPANSION)
 		{
 			return max(1, (iWonderWeight * StrategyDirectiveAIConstants::EXPANSION_WONDER_PERCENT) / 100);

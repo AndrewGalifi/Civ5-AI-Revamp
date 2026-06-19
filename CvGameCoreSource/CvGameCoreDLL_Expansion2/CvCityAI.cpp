@@ -196,7 +196,8 @@ namespace
 
 	int GetExperimentNonPuppetCityCount(CvPlayerAI& kOwner)
 	{
-		return max(0, kOwner.getNumCities() - kOwner.GetNumPuppetCities());
+		const StrategyState& kState = kOwner.GetGrandStrategyAI()->GetStrategyState();
+		return kState.m_kSummary.m_iNonPuppetCities;
 	}
 
 	int GetExperimentTargetWorkers(CvPlayerAI& kOwner)
@@ -223,7 +224,9 @@ namespace
 			return false;
 		}
 
-		const StrategyDirective kDirective = kOwner.GetGrandStrategyAI()->BuildStrategyDirective();
+		const StrategyState& kState = kOwner.GetGrandStrategyAI()->GetStrategyState();
+
+		const StrategyDirective& kDirective = kState.m_kDirective;
 		return kDirective.m_ePrimaryStrategy == PRIMARY_STRATEGY_MILITARISTIC_EXPANSION || kDirective.m_ePrimaryStrategy == PRIMARY_STRATEGY_MILITARY;
 	}
 
@@ -234,7 +237,9 @@ namespace
 			return StrategyDirectiveAIConstants::MILITARY_THREAT_NONE;
 		}
 
-		const StrategyDirective kDirective = kOwner.GetGrandStrategyAI()->BuildStrategyDirective();
+		const StrategyState& kState = kOwner.GetGrandStrategyAI()->GetStrategyState();
+
+		const StrategyDirective& kDirective = kState.m_kDirective;
 		return kDirective.m_iMilitaryThreatSeverity;
 	}
 
@@ -253,13 +258,15 @@ namespace
 	}
 	bool IsExperimentBarbarianThreat(CvPlayerAI& kOwner)
 	{
-		const GameStateSummary kSummary = kOwner.GetGrandStrategyAI()->BuildGameStateSummary();
+		const StrategyState& kState = kOwner.GetGrandStrategyAI()->GetStrategyState();
+		const GameStateSummary& kSummary = kState.m_kSummary;
 		return kSummary.m_bBarbarianThreat;
 	}
 
 	bool IsExperimentCityOrMajorThreat(CvPlayerAI& kOwner)
 	{
-		const StrategyDirective kDirective = kOwner.GetGrandStrategyAI()->BuildStrategyDirective();
+		const StrategyState& kState = kOwner.GetGrandStrategyAI()->GetStrategyState();
+		const StrategyDirective& kDirective = kState.m_kDirective;
 		if(kDirective.m_bNearbyThreat || kDirective.m_ePrimaryStrategy == PRIMARY_STRATEGY_MILITARY)
 		{
 			return true;
@@ -276,7 +283,8 @@ namespace
 
 	int GetExperimentTargetLandCombatUnits(CvPlayerAI& kOwner)
 	{
-		const int iNonPuppetCities = GetExperimentNonPuppetCityCount(kOwner);
+		const StrategyState& kState = kOwner.GetGrandStrategyAI()->GetStrategyState();
+		const int iNonPuppetCities = kState.m_kSummary.m_iNonPuppetCities;
 		const int iThreatSeverity = GetExperimentMilitaryThreatSeverity(kOwner);
 		if(iNonPuppetCities <= 0 || iThreatSeverity < StrategyDirectiveAIConstants::MILITARY_THREAT_MODERATE)
 		{
@@ -295,8 +303,7 @@ namespace
 		if(iThreatSeverity >= StrategyDirectiveAIConstants::MILITARY_THREAT_HIGH)
 		{
 			iTargetCombatUnits = max(iTargetCombatUnits, (iNonPuppetCities * 3) + 1);
-
-			const GameStateSummary kSummary = kOwner.GetGrandStrategyAI()->BuildGameStateSummary();
+			const GameStateSummary& kSummary = kState.m_kSummary;
 			if(kSummary.m_iRelevantMilitaryAverage > 0 && kSummary.m_iMilitaryPercentOfRelevantAverage < StrategyDirectiveAIConstants::MILITARY_RELEVANT_SHORTFALL_TARGET_PERCENT)
 			{
 				const int iShortfall = StrategyDirectiveAIConstants::MILITARY_RELEVANT_SHORTFALL_TARGET_PERCENT - kSummary.m_iMilitaryPercentOfRelevantAverage;
@@ -338,42 +345,11 @@ namespace
 			return false;
 		}
 
-		CvCity* pCapital = kOwner.getCapitalCity();
-		if(pCapital == NULL)
-		{
-			return false;
-		}
+		const StrategyState& kState = kOwner.GetGrandStrategyAI()->GetStrategyState();
 
-		const BuildingTypes eNationalCollege = GetExperimentBuildingForClass(kOwner, "BUILDINGCLASS_NATIONAL_COLLEGE");
-		if(eNationalCollege == NO_BUILDING || pCapital->GetCityBuildings()->GetNumBuilding(eNationalCollege) > 0)
-		{
-			return false;
-		}
-
-		if(pCapital->getFirstBuildingOrder(eNationalCollege) != -1 || pCapital->canConstruct(eNationalCollege))
-		{
-			return true;
-		}
-
-		const BuildingTypes eLibrary = GetExperimentBuildingForClass(kOwner, "BUILDINGCLASS_LIBRARY");
-		if(eLibrary == NO_BUILDING)
-		{
-			return false;
-		}
-
-		int iLoop = 0;
-		for(CvCity* pLoopCity = kOwner.firstCity(&iLoop); pLoopCity != NULL; pLoopCity = kOwner.nextCity(&iLoop))
-		{
-			if(!pLoopCity->IsPuppet() && pLoopCity->GetCityBuildings()->GetNumBuilding(eLibrary) == 0 && (pLoopCity->canConstruct(eLibrary) || pLoopCity->getFirstBuildingOrder(eLibrary) != -1))
-			{
-				return true;
-			}
-		}
-
-		return false;
+		const NationalCollegeStatus eStatus = kState.m_eNationalCollegeStatus;
+		return eStatus == NC_STATUS_WAITING_FOR_LIBRARIES || eStatus == NC_STATUS_READY_TO_BUILD || eStatus == NC_STATUS_QUEUED;
 	}
-
-
 	bool IsExperimentThreatMilitaryPivotNeeded(CvPlayerAI& kOwner)
 	{
 		if(!ShouldUseStrategyDirectiveAI(kOwner.GetID()))
@@ -406,7 +382,9 @@ namespace
 			return false;
 		}
 
-		const StrategyDirective kDirective = kOwner.GetGrandStrategyAI()->BuildStrategyDirective();
+		const StrategyState& kState = kOwner.GetGrandStrategyAI()->GetStrategyState();
+
+		const StrategyDirective& kDirective = kState.m_kDirective;
 		return kDirective.m_ePrimaryStrategy == PRIMARY_STRATEGY_TREASURY_RECOVERY;
 	}
 
@@ -590,7 +568,9 @@ namespace
 			return false;
 		}
 
-		const StrategyDirective kDirective = kOwner.GetGrandStrategyAI()->BuildStrategyDirective();
+		const StrategyState& kState = kOwner.GetGrandStrategyAI()->GetStrategyState();
+
+		const StrategyDirective& kDirective = kState.m_kDirective;
 		if(kDirective.m_iSettlerWeightBonus <= 0)
 		{
 			return false;
@@ -815,7 +795,9 @@ namespace
 			return false;
 		}
 
-		const StrategyDirective kDirective = kOwner.GetGrandStrategyAI()->BuildStrategyDirective();
+		const StrategyState& kState = kOwner.GetGrandStrategyAI()->GetStrategyState();
+
+		const StrategyDirective& kDirective = kState.m_kDirective;
 		if(kDirective.m_ePrimaryStrategy == PRIMARY_STRATEGY_MILITARISTIC_EXPANSION || kDirective.m_ePrimaryStrategy == PRIMARY_STRATEGY_MILITARY)
 		{
 			return false;
@@ -870,7 +852,9 @@ namespace
 			return false;
 		}
 
-		const StrategyDirective kDirective = kOwner.GetGrandStrategyAI()->BuildStrategyDirective();
+		const StrategyState& kState = kOwner.GetGrandStrategyAI()->GetStrategyState();
+
+		const StrategyDirective& kDirective = kState.m_kDirective;
 		if(IsExperimentNationalCollegePending(kOwner) || kDirective.m_ePrimaryStrategy == PRIMARY_STRATEGY_EXPANSION || kDirective.m_iMilitaryThreatSeverity >= StrategyDirectiveAIConstants::MILITARY_THREAT_MODERATE)
 		{
 			return true;

@@ -6,7 +6,7 @@
 - `CvGameCoreDLL_Expansion2/CvGrandStrategyAI.h`
 - `CvGameCoreDLL_Expansion2/CvGrandStrategyAI.cpp`
 
-Adds the experiment-player gate, `GameStateSummary`, `StrategyDirective`, directive selection, shared tuning constants, and CSV logging.
+Adds the experiment-player gate, `GameStateSummary`, `StrategyDirective`, cached `StrategyState`, shared `NationalCollegeStatus` and non-puppet city-count facts, directive selection, shared tuning constants, and CSV logging.
 
 ## Experiment result logging
 
@@ -30,7 +30,7 @@ Adds targeted production forcing or biasing for scouts, science infrastructure, 
 - `CvGameCoreDLL_Expansion2/CvPolicyAI.cpp`
 - `CvGameCoreDLL_Expansion2/CvCityCitizens.cpp`
 
-Adds soft research path priorities, directive-driven flavor adjustments, Tradition/Rationalism nudges, and experiment-player citizen focus overrides.
+Adds soft research path priorities, directive-driven flavor adjustments, table-driven policy branch preferences currently covering Tradition/Rationalism, and experiment-player citizen focus overrides.
 
 ## Expansion, settlement, and worker behavior
 

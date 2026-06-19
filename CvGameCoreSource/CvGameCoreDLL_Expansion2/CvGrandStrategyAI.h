@@ -60,6 +60,7 @@ struct GameStateSummary
 
 	int m_iNumCities;
 	int m_iNumPuppetCities;
+	int m_iNonPuppetCities;
 	int m_iTotalPopulation;
 
 	int m_iExcessHappiness;
@@ -152,6 +153,25 @@ struct StrategyDirective
 	bool m_bAllowCapitalSettlerStrategy;
 };
 
+enum NationalCollegeStatus
+{
+	NC_STATUS_NOT_RELEVANT,
+	NC_STATUS_WAITING_FOR_LIBRARIES,
+	NC_STATUS_READY_TO_BUILD,
+	NC_STATUS_QUEUED,
+	NC_STATUS_COMPLETED
+};
+
+struct StrategyState
+{
+	StrategyState();
+
+	int m_iTurn;
+	GameStateSummary m_kSummary;
+	StrategyDirective m_kDirective;
+	NationalCollegeStatus m_eNationalCollegeStatus;
+};
+
 bool ShouldUseStrategyDirectiveAI(PlayerTypes ePlayer);
 //END MOD
 
@@ -180,8 +200,7 @@ public:
 
 	void DoTurn();
 	//MOD: public accessors for current strategic snapshot/directive
-	GameStateSummary BuildGameStateSummary();
-	StrategyDirective BuildStrategyDirective();
+	const StrategyState& GetStrategyState();
 
 	int GetConquestPriority();
 	int GetCulturePriority();
@@ -219,8 +238,9 @@ public:
 
 private:
 	//MOD: directive construction and diagnostic logging
+	GameStateSummary CreateGameStateSummary();
 	StrategyDirective BuildStrategyDirective(const GameStateSummary& kSummary);
-
+	void InvalidateStrategyState();
 
 	void LogStrategyDirective(const GameStateSummary& kSummary, const StrategyDirective& kDirective);
 	void LogGrandStrategies(const FStaticVector< int, 5, true, c_eCiv5GameplayDLL >& vGrandStrategyPriorities);
@@ -234,10 +254,10 @@ private:
 	AIGrandStrategyTypes m_eActiveGrandStrategy;
 
 	int* m_paiGrandStrategyPriority;
-	//MOD: per-turn cache for the derived game-state summary
-	GameStateSummary m_kCachedGameStateSummary;
-	int m_iCachedGameStateSummaryTurn;
-	bool m_bGameStateSummaryCached;
+	//MOD: per-turn cache for the derived strategy state
+	StrategyState m_kCachedStrategyState;
+	int m_iCachedStrategyStateTurn;
+	bool m_bStrategyStateCached;
 
 	// **********
 	// Stuff relating to guessing what other Players are up to

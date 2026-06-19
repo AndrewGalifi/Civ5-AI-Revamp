@@ -252,7 +252,8 @@ void CvCityCitizens::DoTurn()
 		if(ShouldUseStrategyDirectiveAI(thisPlayer.GetID()))
 		{
 			bool bDirectiveLocked = false;
-			const StrategyDirective kDirective = thisPlayer.GetGrandStrategyAI()->BuildStrategyDirective();
+			const StrategyState& kState = thisPlayer.GetGrandStrategyAI()->GetStrategyState();
+			const StrategyDirective& kDirective = kState.m_kDirective;
 			const bool bForceEarlyGrowth = (m_pCity->getPopulation() < 3 && !kDirective.m_bForceAvoidGrowth);
 			const bool bForceSettlerProduction = (m_pCity->isProductionUnit() && m_pCity->getProductionUnitAI() == UNITAI_SETTLE);
 			bDirectiveLocked = (kDirective.m_bCityFocusLocked || bForceEarlyGrowth || bForceSettlerProduction);

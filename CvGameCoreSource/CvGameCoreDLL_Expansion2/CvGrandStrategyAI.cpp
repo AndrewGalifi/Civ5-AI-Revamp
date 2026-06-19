@@ -74,10 +74,10 @@ namespace
 	//MOD: production policy defaults emitted through StrategyDirective
 	const int AI_EXPERIMENT_WORKER_BASE_WEIGHT_BONUS = 700;
 	const int AI_EXPERIMENT_WORKER_DEFICIT_WEIGHT_BONUS = 200;
-	const int AI_EXPERIMENT_EXPANSION_SETTLER_WEIGHT_BONUS = 7000	;
-	const int AI_EXPERIMENT_IMMINENT_BARB_CITY_RANGE = 5;
+	const int AI_EXPERIMENT_EXPANSION_SETTLER_WEIGHT_BONUS = 7000;
+	const int AI_EXPERIMENT_IMMINENT_BARB_CITY_RANGE = 4;
 	const int AI_EXPERIMENT_IMMINENT_BARB_CIVILIAN_RANGE = 4;
-	const int AI_EXPERIMENT_BARB_RESPONSE_MILITARY_PER_BARB = 2;
+	const int AI_EXPERIMENT_BARB_RESPONSE_MILITARY_PER_BARB = 1;
 	const int AI_EXPERIMENT_IMMINENT_MAJOR_CITY_RANGE = 6;
 	const int AI_EXPERIMENT_IMMINENT_MAJOR_CIVILIAN_RANGE = 4;
 	const int AI_EXPERIMENT_MAJOR_RESPONSE_MILITARY_PER_UNIT = 1;
@@ -571,6 +571,59 @@ namespace
 			}
 		}
 		return false;
+	}
+
+	//MOD: shared factual National College status for the strategy state
+	NationalCollegeStatus GetExperimentNationalCollegeStatus(CvPlayer* pPlayer)
+	{
+		if(pPlayer == NULL || !ShouldUseStrategyDirectiveAI(pPlayer->GetID()))
+		{
+			return NC_STATUS_NOT_RELEVANT;
+		}
+
+		CvCity* pCapital = pPlayer->getCapitalCity();
+		if(pCapital == NULL)
+		{
+			return NC_STATUS_NOT_RELEVANT;
+		}
+
+		const BuildingTypes eNationalCollege = GetExperimentBuildingForClass(pPlayer, "BUILDINGCLASS_NATIONAL_COLLEGE");
+		if(eNationalCollege == NO_BUILDING)
+		{
+			return NC_STATUS_NOT_RELEVANT;
+		}
+
+		if(IsExperimentBuildingBuilt(*pPlayer, eNationalCollege))
+		{
+			return NC_STATUS_COMPLETED;
+		}
+
+		if(pCapital->getFirstBuildingOrder(eNationalCollege) != -1)
+		{
+			return NC_STATUS_QUEUED;
+		}
+
+		if(pCapital->canConstruct(eNationalCollege))
+		{
+			return NC_STATUS_READY_TO_BUILD;
+		}
+
+		const BuildingTypes eLibrary = GetExperimentBuildingForClass(pPlayer, "BUILDINGCLASS_LIBRARY");
+		if(eLibrary == NO_BUILDING)
+		{
+			return NC_STATUS_NOT_RELEVANT;
+		}
+
+		int iCityLoop = 0;
+		for(CvCity* pLoopCity = pPlayer->firstCity(&iCityLoop); pLoopCity != NULL; pLoopCity = pPlayer->nextCity(&iCityLoop))
+		{
+			if(!pLoopCity->IsPuppet() && pLoopCity->GetCityBuildings()->GetNumBuilding(eLibrary) == 0 && (pLoopCity->canConstruct(eLibrary) || pLoopCity->getFirstBuildingOrder(eLibrary) != -1))
+			{
+				return NC_STATUS_WAITING_FOR_LIBRARIES;
+			}
+		}
+
+		return NC_STATUS_NOT_RELEVANT;
 	}
 
 	bool IsExperimentLandCombatUnitEntry(CvUnitEntry* pkUnitInfo)
@@ -1142,7 +1195,7 @@ namespace
 		AppendExperimentRankMetric(strHeader, strLog, *pPlayer, "GPTx100", EXPERIMENT_ANALYSIS_GOLD_PER_TURN_TIMES_100);
 		AppendExperimentRankMetric(strHeader, strLog, *pPlayer, "Happiness", EXPERIMENT_ANALYSIS_HAPPINESS);
 
-		const int iNonPuppetCities = CountExperimentNonPuppetCities(*pPlayer);
+		const int iNonPuppetCities = kSummary.m_iNonPuppetCities;
 		const int iPopulation = std::max(1, pPlayer->getTotalPopulation());
 		const int iWorkers = pPlayer->GetNumUnitsWithUnitAI(UNITAI_WORKER, true, true) + pPlayer->GetNumUnitsWithUnitAI(UNITAI_WORKER_SEA, true, true);
 		const int iSettlers = pPlayer->GetNumUnitsWithUnitAI(UNITAI_SETTLE, true, true);
@@ -1233,6 +1286,7 @@ GameStateSummary::GameStateSummary() :
 	m_eEra(NO_ERA),
 	m_iNumCities(0),
 	m_iNumPuppetCities(0),
+	m_iNonPuppetCities(0),
 	m_iTotalPopulation(0),
 	m_iExcessHappiness(0),
 	m_bEmpireUnhappy(false),
@@ -1297,6 +1351,12 @@ StrategyDirective::StrategyDirective() :
 	m_iSettlerWeightBonus(0),
 	m_iCapitalSettlerThresholdDelta(0),
 	m_bAllowCapitalSettlerStrategy(true)
+{
+}
+//------------------------------------------------------------------------------
+StrategyState::StrategyState() :
+	m_iTurn(-1),
+	m_eNationalCollegeStatus(NC_STATUS_NOT_RELEVANT)
 {
 }
 //END MOD
@@ -1407,8 +1467,10 @@ CvAIGrandStrategyXMLEntry* CvAIGrandStrategyXMLEntries::GetEntry(int index)
 /// Constructor
 CvGrandStrategyAI::CvGrandStrategyAI():
 	m_paiGrandStrategyPriority(NULL),
-	m_iCachedGameStateSummaryTurn(-1),
-	m_bGameStateSummaryCached(false),
+	//MOD: cached summary/directive state
+	m_iCachedStrategyStateTurn(-1),
+	m_bStrategyStateCached(false),
+	//END MOD
 	m_eGuessOtherPlayerActiveGrandStrategy(NULL),
 	m_eGuessOtherPlayerActiveGrandStrategyConfidence(NULL)
 {
@@ -1448,16 +1510,22 @@ void CvGrandStrategyAI::Uninit()
 	SAFE_DELETE_ARRAY(m_eGuessOtherPlayerActiveGrandStrategyConfidence);
 }
 
+//MOD: clear cached summary/directive state when source inputs can change
+void CvGrandStrategyAI::InvalidateStrategyState()
+{
+	m_iCachedStrategyStateTurn = -1;
+	m_bStrategyStateCached = false;
+	m_kCachedStrategyState = StrategyState();
+}
+
 /// Reset AIStrategy status array to all false
 void CvGrandStrategyAI::Reset()
 {
 	int iI;
 
 	m_iNumTurnsSinceActiveSet = 0;
-	//MOD: reset the non-serialized per-turn summary cache
-	m_iCachedGameStateSummaryTurn = -1;
-	m_bGameStateSummaryCached = false;
-	m_kCachedGameStateSummary = GameStateSummary();
+	//MOD: reset the non-serialized per-turn strategy-state cache
+	InvalidateStrategyState();
 
 	m_eActiveGrandStrategy = NO_AIGRANDSTRATEGY;
 
@@ -1482,9 +1550,7 @@ void CvGrandStrategyAI::Read(FDataStream& kStream)
 
 	kStream >> m_iNumTurnsSinceActiveSet;
 	//MOD: reconstructed after load rather than serialized
-	m_iCachedGameStateSummaryTurn = -1;
-	m_bGameStateSummaryCached = false;
-	m_kCachedGameStateSummary = GameStateSummary();
+	InvalidateStrategyState();
 	kStream >> (int&)m_eActiveGrandStrategy;
 
 	FAssertMsg(m_pAIGrandStrategies != NULL && m_pAIGrandStrategies->GetNumAIGrandStrategies() > 0, "Number of AIGrandStrategies to serialize is expected to greater than 0");
@@ -1540,7 +1606,34 @@ CvAIGrandStrategyXMLEntries* CvGrandStrategyAI::GetAIGrandStrategies()
 }
 
 //MOD: game-state summary and strategic directive selection. Builds an information snapshot for high-level strategic planning
-GameStateSummary CvGrandStrategyAI::BuildGameStateSummary()
+const StrategyState& CvGrandStrategyAI::GetStrategyState()
+{
+	if(m_pPlayer == NULL)
+	{
+		InvalidateStrategyState();
+		return m_kCachedStrategyState;
+	}
+
+	CvGame& kGame = GC.getGame();
+	if(m_bStrategyStateCached && m_iCachedStrategyStateTurn == kGame.getGameTurn())
+	{
+		return m_kCachedStrategyState;
+	}
+
+	StrategyState kStrategyState;
+	kStrategyState.m_kSummary = CreateGameStateSummary();
+	kStrategyState.m_kDirective = BuildStrategyDirective(kStrategyState.m_kSummary);
+	kStrategyState.m_eNationalCollegeStatus = GetExperimentNationalCollegeStatus(m_pPlayer);
+	kStrategyState.m_iTurn = kStrategyState.m_kSummary.m_iTurn;
+
+	m_kCachedStrategyState = kStrategyState;
+	m_iCachedStrategyStateTurn = kStrategyState.m_iTurn;
+	m_bStrategyStateCached = true;
+
+	return m_kCachedStrategyState;
+}
+
+GameStateSummary CvGrandStrategyAI::CreateGameStateSummary()
 {
 	GameStateSummary kSummary;
 
@@ -1550,17 +1643,13 @@ GameStateSummary CvGrandStrategyAI::BuildGameStateSummary()
 	}
 
 	CvGame& kGame = GC.getGame();
-	if(m_bGameStateSummaryCached && m_iCachedGameStateSummaryTurn == kGame.getGameTurn())
-	{
-		return m_kCachedGameStateSummary;
-	}
-
 	CvTeam& kTeam = GET_TEAM(m_pPlayer->getTeam());
 
 	kSummary.m_iTurn = kGame.getGameTurn();
 	kSummary.m_eEra = m_pPlayer->GetCurrentEra();
 	kSummary.m_iNumCities = m_pPlayer->getNumCities();
 	kSummary.m_iNumPuppetCities = m_pPlayer->GetNumPuppetCities();
+	kSummary.m_iNonPuppetCities = max(0, kSummary.m_iNumCities - kSummary.m_iNumPuppetCities);
 	kSummary.m_iTotalPopulation = m_pPlayer->getTotalPopulation();
 
 	kSummary.m_iExcessHappiness = m_pPlayer->GetExcessHappiness();
@@ -1693,17 +1782,9 @@ GameStateSummary CvGrandStrategyAI::BuildGameStateSummary()
 	}
 
 	kSummary.m_eCurrentGrandStrategy = GetActiveGrandStrategy();
-	m_kCachedGameStateSummary = kSummary;
-	m_iCachedGameStateSummaryTurn = kSummary.m_iTurn;
-	m_bGameStateSummaryCached = true;
 
 	return kSummary;
 }
-StrategyDirective CvGrandStrategyAI::BuildStrategyDirective()
-{
-	return BuildStrategyDirective(BuildGameStateSummary());
-}
-
 StrategyDirective CvGrandStrategyAI::BuildStrategyDirective(const GameStateSummary& kSummary)
 {
 	StrategyDirective kDirective;
@@ -1866,6 +1947,9 @@ StrategyDirective CvGrandStrategyAI::BuildStrategyDirective(const GameStateSumma
 /// Runs every turn to determine what the player's Active Grand Strategy is and to change Priority Levels as necessary
 void CvGrandStrategyAI::DoTurn()
 {
+	//MOD: rebuild the strategy state after turn-level AI state updates
+	InvalidateStrategyState();
+	//END MOD
 	DoGuessOtherPlayersActiveGrandStrategy();
 
 	int iGrandStrategiesLoop;
@@ -2001,9 +2085,8 @@ void CvGrandStrategyAI::DoTurn()
 	LogGrandStrategies(viGrandStrategyChangeForLogging);
 
 	//MOD: log the experiment directive alongside vanilla grand-strategy processing
-	const GameStateSummary kSummary = BuildGameStateSummary();
-	const StrategyDirective kDirective = BuildStrategyDirective(kSummary);
-	LogStrategyDirective(kSummary, kDirective);
+	const StrategyState& kStrategyState = GetStrategyState();
+	LogStrategyDirective(kStrategyState.m_kSummary, kStrategyState.m_kDirective);
 }
 
 /// Returns Priority for Conquest Grand Strategy
@@ -2407,6 +2490,9 @@ void CvGrandStrategyAI::SetActiveGrandStrategy(AIGrandStrategyTypes eGrandStrate
 	if(eGrandStrategy != NO_AIGRANDSTRATEGY)
 	{
 		m_eActiveGrandStrategy = eGrandStrategy;
+		//MOD: active grand strategy feeds the strategy state
+		InvalidateStrategyState();
+		//END MOD
 
 		SetNumTurnsSinceActiveSet(0);
 	}

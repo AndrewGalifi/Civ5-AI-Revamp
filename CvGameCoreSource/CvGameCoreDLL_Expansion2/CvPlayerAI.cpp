@@ -61,17 +61,6 @@ static bool IsExperimentSettlePlotWithinCityRange(const CvPlayerAI* pPlayer, con
 	return !bHasCity;
 }
 
-static BuildingTypes GetExperimentBuildingForClass(CvPlayerAI* pPlayer, const char* szBuildingClass)
-{
-	const int iBuildingClass = GC.getInfoTypeForString(szBuildingClass, true);
-	if(pPlayer == NULL || iBuildingClass == -1)
-	{
-		return NO_BUILDING;
-	}
-
-	return (BuildingTypes)pPlayer->getCivilizationInfo().getCivilizationBuildings(iBuildingClass);
-}
-
 static bool IsExperimentNationalCollegePendingForSettling(CvPlayerAI* pPlayer)
 {
 	if(pPlayer == NULL || !ShouldUseStrategyDirectiveAI(pPlayer->GetID()) || GC.getGame().getGameTurn() <= StrategyDirectiveAIConstants::NC_SETTLE_SITE_VALUE_SUPPRESSION_TURN)
@@ -79,39 +68,10 @@ static bool IsExperimentNationalCollegePendingForSettling(CvPlayerAI* pPlayer)
 		return false;
 	}
 
-	CvCity* pCapital = pPlayer->getCapitalCity();
-	if(pCapital == NULL)
-	{
-		return false;
-	}
+	const StrategyState& kState = pPlayer->GetGrandStrategyAI()->GetStrategyState();
 
-	const BuildingTypes eNationalCollege = GetExperimentBuildingForClass(pPlayer, "BUILDINGCLASS_NATIONAL_COLLEGE");
-	if(eNationalCollege == NO_BUILDING || pCapital->GetCityBuildings()->GetNumBuilding(eNationalCollege) > 0)
-	{
-		return false;
-	}
-
-	if(pCapital->getFirstBuildingOrder(eNationalCollege) != -1 || pCapital->canConstruct(eNationalCollege))
-	{
-		return true;
-	}
-
-	const BuildingTypes eLibrary = GetExperimentBuildingForClass(pPlayer, "BUILDINGCLASS_LIBRARY");
-	if(eLibrary == NO_BUILDING)
-	{
-		return false;
-	}
-
-	int iLoop = 0;
-	for(CvCity* pLoopCity = pPlayer->firstCity(&iLoop); pLoopCity != NULL; pLoopCity = pPlayer->nextCity(&iLoop))
-	{
-		if(!pLoopCity->IsPuppet() && pLoopCity->GetCityBuildings()->GetNumBuilding(eLibrary) == 0 && (pLoopCity->canConstruct(eLibrary) || pLoopCity->getFirstBuildingOrder(eLibrary) != -1))
-		{
-			return true;
-		}
-	}
-
-	return false;
+	const NationalCollegeStatus eStatus = kState.m_eNationalCollegeStatus;
+	return eStatus == NC_STATUS_WAITING_FOR_LIBRARIES || eStatus == NC_STATUS_READY_TO_BUILD || eStatus == NC_STATUS_QUEUED;
 }
 
 static bool IsExperimentNationalCollegeBuilt(CvPlayerAI* pPlayer)
@@ -121,14 +81,9 @@ static bool IsExperimentNationalCollegeBuilt(CvPlayerAI* pPlayer)
 		return false;
 	}
 
-	CvCity* pCapital = pPlayer->getCapitalCity();
-	if(pCapital == NULL)
-	{
-		return false;
-	}
+	const StrategyState& kState = pPlayer->GetGrandStrategyAI()->GetStrategyState();
 
-	const BuildingTypes eNationalCollege = GetExperimentBuildingForClass(pPlayer, "BUILDINGCLASS_NATIONAL_COLLEGE");
-	return eNationalCollege != NO_BUILDING && pCapital->GetCityBuildings()->GetNumBuilding(eNationalCollege) > 0;
+	return kState.m_eNationalCollegeStatus == NC_STATUS_COMPLETED;
 }
 
 static TechTypes GetExperimentNationalCollegePathTech(CvPlayerAI* pPlayer)

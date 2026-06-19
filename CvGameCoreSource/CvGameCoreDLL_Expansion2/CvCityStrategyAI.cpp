@@ -106,7 +106,9 @@ namespace
 			return false;
 		}
 
-		const StrategyDirective kDirective = kPlayer.GetGrandStrategyAI()->BuildStrategyDirective();
+		const StrategyState& kState = kPlayer.GetGrandStrategyAI()->GetStrategyState();
+
+		const StrategyDirective& kDirective = kState.m_kDirective;
 		return kDirective.m_ePrimaryStrategy == PRIMARY_STRATEGY_MILITARISTIC_EXPANSION || kDirective.m_ePrimaryStrategy == PRIMARY_STRATEGY_MILITARY;
 	}
 
@@ -218,13 +220,14 @@ namespace
 			return 0;
 		}
 
-		const int iNonPuppetCities = max(0, kPlayer.getNumCities() - kPlayer.GetNumPuppetCities());
+		const StrategyState& kState = kPlayer.GetGrandStrategyAI()->GetStrategyState();
+		const int iNonPuppetCities = kState.m_kSummary.m_iNonPuppetCities;
 		if(iNonPuppetCities <= 0)
 		{
 			return 0;
 		}
 
-		const StrategyDirective kDirective = kPlayer.GetGrandStrategyAI()->BuildStrategyDirective();
+		const StrategyDirective& kDirective = kState.m_kDirective;
 		if(kDirective.m_ePrimaryStrategy == PRIMARY_STRATEGY_MILITARISTIC_EXPANSION)
 		{
 			return 1;
@@ -272,53 +275,6 @@ namespace
 		return !IsExperimentMilitaryProductionDeficit(kPlayer);
 	}
 
-	bool IsExperimentNationalCollegeBlocked(CvPlayerAI& kPlayer, int iFirstTurn)
-	{
-		if(!ShouldUseStrategyDirectiveAI(kPlayer.GetID()) || GC.getGame().getGameTurn() <= iFirstTurn)
-		{
-			return false;
-		}
-
-		if(kPlayer.getNumCities() - kPlayer.GetNumPuppetCities() <= 1)
-		{
-			return false;
-		}
-
-		CvCity* pCapital = kPlayer.getCapitalCity();
-		if(pCapital == NULL)
-		{
-			return false;
-		}
-
-		const BuildingTypes eNationalCollege = GetExperimentBuildingForClass(kPlayer, "BUILDINGCLASS_NATIONAL_COLLEGE");
-		if(eNationalCollege != NO_BUILDING)
-		{
-			if(pCapital->GetCityBuildings()->GetNumBuilding(eNationalCollege) > 0 || pCapital->canConstruct(eNationalCollege))
-			{
-				return false;
-			}
-		}
-
-		const BuildingTypes eLibrary = GetExperimentBuildingForClass(kPlayer, "BUILDINGCLASS_LIBRARY");
-		if(eLibrary == NO_BUILDING)
-		{
-			return false;
-		}
-
-		int iLoop = 0;
-		for(CvCity* pLoopCity = kPlayer.firstCity(&iLoop); pLoopCity != NULL; pLoopCity = kPlayer.nextCity(&iLoop))
-		{
-			if(pLoopCity != NULL && !pLoopCity->IsPuppet() && pLoopCity->GetCityBuildings()->GetNumBuilding(eLibrary) == 0)
-			{
-				if(pLoopCity->canConstruct(eLibrary) || pLoopCity->getFirstBuildingOrder(eLibrary) != -1)
-				{
-					return true;
-				}
-			}
-		}
-
-		return false;
-	}
 	bool IsExperimentNationalCollegePending(CvPlayerAI& kPlayer)
 	{
 		if(!ShouldUseStrategyDirectiveAI(kPlayer.GetID()) || GC.getGame().getGameTurn() < StrategyDirectiveAIConstants::SCIENCE_INFRASTRUCTURE_PRIORITY_TURN)
@@ -326,19 +282,10 @@ namespace
 			return false;
 		}
 
-		CvCity* pCapital = kPlayer.getCapitalCity();
-		if(pCapital == NULL)
-		{
-			return false;
-		}
+		const StrategyState& kState = kPlayer.GetGrandStrategyAI()->GetStrategyState();
 
-		const BuildingTypes eNationalCollege = GetExperimentBuildingForClass(kPlayer, "BUILDINGCLASS_NATIONAL_COLLEGE");
-		if(eNationalCollege == NO_BUILDING || pCapital->GetCityBuildings()->GetNumBuilding(eNationalCollege) > 0)
-		{
-			return false;
-		}
-
-		return pCapital->canConstruct(eNationalCollege) || IsExperimentNationalCollegeBlocked(kPlayer, StrategyDirectiveAIConstants::SCIENCE_INFRASTRUCTURE_PRIORITY_TURN);
+		const NationalCollegeStatus eStatus = kState.m_eNationalCollegeStatus;
+		return eStatus == NC_STATUS_WAITING_FOR_LIBRARIES || eStatus == NC_STATUS_READY_TO_BUILD || eStatus == NC_STATUS_QUEUED;
 	}
 	int CountExperimentEarlyWonderShots(CvPlayerAI& kPlayer, CvCity* pCurrentCity)
 	{
@@ -467,7 +414,9 @@ namespace
 			return iWeight;
 		}
 
-		const StrategyDirective kDirective = kPlayer.GetGrandStrategyAI()->BuildStrategyDirective();
+		const StrategyState& kState = kPlayer.GetGrandStrategyAI()->GetStrategyState();
+
+		const StrategyDirective& kDirective = kState.m_kDirective;
 		if(kDirective.m_ePrimaryStrategy == PRIMARY_STRATEGY_EXPANSION)
 		{
 			return max(1, (iWeight * StrategyDirectiveAIConstants::EXPANSION_WONDER_PERCENT) / 100);
@@ -523,7 +472,9 @@ namespace
 			return 0;
 		}
 
-		const StrategyDirective kDirective = kPlayer.GetGrandStrategyAI()->BuildStrategyDirective();
+		const StrategyState& kState = kPlayer.GetGrandStrategyAI()->GetStrategyState();
+
+		const StrategyDirective& kDirective = kState.m_kDirective;
 		if(kDirective.m_iWorkerBaseWeightBonus <= 0)
 		{
 			return 0;
@@ -639,7 +590,9 @@ namespace
 			return 0;
 		}
 
-		const StrategyDirective kDirective = kPlayer.GetGrandStrategyAI()->BuildStrategyDirective();
+		const StrategyState& kState = kPlayer.GetGrandStrategyAI()->GetStrategyState();
+
+		const StrategyDirective& kDirective = kState.m_kDirective;
 		if(kDirective.m_iSettlerWeightBonus <= 0)
 		{
 			return 0;
@@ -703,7 +656,9 @@ namespace
 			return iBaseFlavorValue;
 		}
 
-		const StrategyDirective kDirective = kPlayer.GetGrandStrategyAI()->BuildStrategyDirective();
+		const StrategyState& kState = kPlayer.GetGrandStrategyAI()->GetStrategyState();
+
+		const StrategyDirective& kDirective = kState.m_kDirective;
 		int iFlavorValue = iBaseFlavorValue;
 
 		AddDirectiveFlavorBias(eFlavor, "FLAVOR_SCIENCE", AI_EXPERIMENT_BASE_SCIENCE_FLAVOR_BONUS, iFlavorValue);
@@ -3191,62 +3146,81 @@ bool CityStrategyAIHelpers::IsTestCityStrategy_HaveTrainingFacility(CvCity* pCit
 
 	return false;
 }
-/// "Capital Need Settler" City Strategy: have capital build a settler ASAP
-bool CityStrategyAIHelpers::IsTestCityStrategy_CapitalNeedSettler(AICityStrategyTypes eStrategy, CvCity* pCity)
+namespace
 {
-	if(pCity->isCapital())
+	//MOD: shared capital-settler evaluation, with experiment-only policy inputs
+	bool EvaluateCapitalSettlerNeed(AICityStrategyTypes eStrategy, CvCity* pCity, int iThresholdDelta, bool bAllowStrategy)
 	{
-		CvPlayer& kPlayer = GET_PLAYER(pCity->getOwner());
-
-		//MOD: gate vanilla capital-settler strategy during recovery/defense states
-		if(!kPlayer.isMinorCiv() && ShouldUseStrategyDirectiveAI(kPlayer.GetID()))
+		if(!bAllowStrategy || !pCity->isCapital())
 		{
-			const StrategyDirective kDirective = kPlayer.GetGrandStrategyAI()->BuildStrategyDirective();
-			if(!kDirective.m_bAllowCapitalSettlerStrategy)
+			return false;
+		}
+
+		CvPlayer& kPlayer = GET_PLAYER(pCity->getOwner());
+		if(kPlayer.isMinorCiv())
+		{
+			return false;
+		}
+
+		int iNumCities = kPlayer.getNumCities();
+		int iSettlersOnMapOrBuild = kPlayer.GetNumUnitsWithUnitAI(UNITAI_SETTLE, true);
+		int iCitiesPlusSettlers = iNumCities + iSettlersOnMapOrBuild;
+
+		if((iCitiesPlusSettlers) < 3)
+		{
+
+			AICityStrategyTypes eUnderThreat = (AICityStrategyTypes) GC.getInfoTypeForString("AICITYSTRATEGY_CAPITAL_UNDER_THREAT");
+			if(eUnderThreat != NO_AICITYSTRATEGY)
 			{
+				if(GC.getGame().getGameTurn() > 50 && pCity->GetCityStrategyAI()->IsUsingCityStrategy(eUnderThreat))
+				{
+					return false;
+				}
+			}
+
+			MilitaryAIStrategyTypes eMilStrategy = (MilitaryAIStrategyTypes) GC.getInfoTypeForString("MILITARYAISTRATEGY_WAR_MOBILIZATION");
+			if(eMilStrategy != NO_MILITARYAISTRATEGY && kPlayer.GetMilitaryAI()->IsUsingStrategy(eMilStrategy))
+			{
+				// this is very risky, if this war fails, the civ lost the entire game as they have no backup plan
 				return false;
 			}
 
-			int iNumCities = kPlayer.getNumCities();
-			int iSettlersOnMapOrBuild = kPlayer.GetNumUnitsWithUnitAI(UNITAI_SETTLE, true);
-			int iCitiesPlusSettlers = iNumCities + iSettlersOnMapOrBuild;
+			CvAICityStrategyEntry* pCityStrategy = pCity->GetCityStrategyAI()->GetAICityStrategies()->GetEntry(eStrategy);
+			int iWeightThresholdModifier = CityStrategyAIHelpers::GetWeightThresholdModifier(eStrategy, pCity);	// -10 per EXPANSION, +2 per DEFENSE
+			int iWeightThreshold = pCityStrategy->GetWeightThreshold() + iWeightThresholdModifier + iThresholdDelta;	// 130 before directive adjustment
 
-			if((iCitiesPlusSettlers) < 3)
+			int iGameTurn = GC.getGame().getGameTurn();
+			if((iCitiesPlusSettlers == 1 && (iGameTurn * 4) > iWeightThreshold) ||
+				(iCitiesPlusSettlers == 2 && (iGameTurn * 2) > iWeightThreshold) ||
+				(iCitiesPlusSettlers == 3 && iGameTurn > iWeightThreshold) )
 			{
-
-				AICityStrategyTypes eUnderThreat = (AICityStrategyTypes) GC.getInfoTypeForString("AICITYSTRATEGY_CAPITAL_UNDER_THREAT");
-				if(eUnderThreat != NO_AICITYSTRATEGY)
-				{
-					if(GC.getGame().getGameTurn() > 50 && pCity->GetCityStrategyAI()->IsUsingCityStrategy(eUnderThreat))
-					{
-						return false;
-					}
-				}
-
-				MilitaryAIStrategyTypes eMilStrategy = (MilitaryAIStrategyTypes) GC.getInfoTypeForString("MILITARYAISTRATEGY_WAR_MOBILIZATION");
-				if(eMilStrategy != NO_MILITARYAISTRATEGY && kPlayer.GetMilitaryAI()->IsUsingStrategy(eMilStrategy))
-				{
-					// this is very risky, if this war fails, the civ lost the entire game as they have no backup plan
-					return false;
-				}
-
-				CvAICityStrategyEntry* pCityStrategy = pCity->GetCityStrategyAI()->GetAICityStrategies()->GetEntry(eStrategy);
-				int iWeightThresholdModifier = GetWeightThresholdModifier(eStrategy, pCity);	// -10 per EXPANSION, +2 per DEFENSE
-				int iWeightThreshold = pCityStrategy->GetWeightThreshold() + iWeightThresholdModifier + kDirective.m_iCapitalSettlerThresholdDelta;	// 130 before directive adjustment
-
-				int iGameTurn = GC.getGame().getGameTurn();
-				if((iCitiesPlusSettlers == 1 && (iGameTurn * 4) > iWeightThreshold) ||
-					(iCitiesPlusSettlers == 2 && (iGameTurn * 2) > iWeightThreshold) || 
-					(iCitiesPlusSettlers == 3 && iGameTurn > iWeightThreshold) )
-				{
-					return true;
-				}
+				return true;
 			}
 		}
-		//END MOD
-	}
 
-	return false;
+		return false;
+	}
+}
+
+/// "Capital Need Settler" City Strategy: have capital build a settler ASAP
+bool CityStrategyAIHelpers::IsTestCityStrategy_CapitalNeedSettler(AICityStrategyTypes eStrategy, CvCity* pCity)
+{
+	int iThresholdDelta = 0;
+	bool bAllowStrategy = true;
+
+	CvPlayer& kPlayer = GET_PLAYER(pCity->getOwner());
+
+	//MOD: gate vanilla capital-settler strategy during recovery/defense states
+	if(!kPlayer.isMinorCiv() && ShouldUseStrategyDirectiveAI(kPlayer.GetID()))
+	{
+		const StrategyState& kState = kPlayer.GetGrandStrategyAI()->GetStrategyState();
+		const StrategyDirective& kDirective = kState.m_kDirective;
+		iThresholdDelta = kDirective.m_iCapitalSettlerThresholdDelta;
+		bAllowStrategy = kDirective.m_bAllowCapitalSettlerStrategy;
+	}
+	//END MOD
+
+	return EvaluateCapitalSettlerNeed(eStrategy, pCity, iThresholdDelta, bAllowStrategy);
 }
 /// "Capital Under Threat" City Strategy: need military units, don't build buildings!
 bool CityStrategyAIHelpers::IsTestCityStrategy_CapitalUnderThreat(CvCity* pCity)
