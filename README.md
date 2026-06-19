@@ -9,14 +9,14 @@ The core idea is:
 2. Select a `StrategyDirective` such as expansion, development, military response, treasury recovery, or happiness recovery.
 3. Apply scoped biases and/or hard pivots to existing AI subsystems (production, food, science, etc).
 
-Note: current source modifications only effect player1 for testing purposes
+Note: current source modifications only affect player 1 for testing purposes.
 
 ## Repository Layout
 
 - `CvGameCoreSource/` contains the Civ V SDK source tree.
 - `CvGameCoreSource/CvGameCoreDLL_Expansion2/` contains the main modified C++ code.
-- `scripts/build_dll.ps1` builds the BNW DLL with MSBuild.
-- `scripts/install_latest_civ5_dll.ps1` copies the latest built DLL into a local Civ V install.
+- `dev_build_install.cmd` is the main local build/install entrypoint.
+- `scripts/civ5_dll.ps1` contains the underlying build/install implementation.
 - `sample_logs/` contains small sample CSVs of AI behavior.
 
 
@@ -33,7 +33,7 @@ Edit `local.paths.ps1` if your Visual Studio/MSBuild or Civ V install path diffe
 Build the DLL:
 
 ```powershell
-.\buildDLL.cmd
+.\scripts\civ5_dll.ps1
 ```
 
 The expected output is:
@@ -47,8 +47,37 @@ CvGameCoreSource\BuildOutput\VS2013_ModWin32\CvGameCoreDLL_Expansion2Win32Mod.dl
 Close Civ V and FireTuner, then run:
 
 ```powershell
-.\install_latest_civ5_dll.cmd
+.\dev_build_install.cmd
 ```
 
-The install script copies the latest built DLL into the local Civ V BNW DLL path and writes a timestamped backup to the Desktop.
+The install step copies the latest built DLL into the local Civ V BNW DLL path.
 
+## Local Test Loop
+
+For active development, build and install in one step:
+
+```powershell
+.\dev_build_install.cmd
+```
+
+This calls the normal build script first, then installs the resulting DLL with the normal install script. Use this when testing local working-tree changes before committing.
+
+To only build through the same wrapper:
+
+```powershell
+.\scripts\civ5_dll.ps1
+```
+
+## GitHub Actions
+
+`.github/workflows/civ5-local-runner.yml` is intended for a Windows self-hosted GitHub Actions runner that has Visual Studio/MSBuild installed.
+
+Recommended runner labels:
+
+```text
+self-hosted
+Windows
+civ5
+```
+
+The workflow builds on pushes to `main` or `dev` and uploads the DLL artifact. It can also be run manually from GitHub Actions. Installing into the local Civ V folder is intentionally kept out of GitHub Actions; use `.\dev_build_install.cmd` for local build/install testing.
