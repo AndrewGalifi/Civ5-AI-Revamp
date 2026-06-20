@@ -18,6 +18,7 @@ Note: current source modifications only affect player 1 for testing purposes.
 - `dev_build_install.cmd` is the main local build/install entrypoint.
 - `scripts/civ5_dll.ps1` contains the underlying build/install implementation.
 - `sample_logs/` contains small sample CSVs of AI behavior.
+- `Actions -> Civ5 Build -> specific run -> Artifacts` to download a specific build's DLL.
 
 
 ## Building
