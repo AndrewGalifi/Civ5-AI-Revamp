@@ -20,14 +20,14 @@ jobs:
     runs-on: [self-hosted, Windows, civ5]
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Build DLL
         shell: cmd
         run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\civ5_dll.ps1
 
       - name: Upload DLL artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: CvGameCoreDLL_Expansion2Win32Mod
           path: CvGameCoreSource/BuildOutput/VS2013_ModWin32/CvGameCoreDLL_Expansion2Win32Mod.dll
