@@ -757,6 +757,8 @@ void CvPlayerCulture::Init(CvPlayer* pPlayer)
 	m_iSwappableMusicIndex    = -1;
 
 	m_iTurnIdeologySwitch = -1;
+	//MOD: reset sustained ideology-crisis tracking at culture initialization.
+	m_iSustainedIdeologyUnhappinessTurns = 0;
 }
 
 // GREAT WORKS
@@ -3077,6 +3079,20 @@ void CvPlayerCulture::SetTurnIdeologySwitch(int iValue)
 	m_iTurnIdeologySwitch = iValue;
 }
 
+//MOD: sustained ideology-driven unhappiness counter for emergency ideology switches.
+int CvPlayerCulture::GetSustainedIdeologyUnhappinessTurns() const
+{
+	return m_iSustainedIdeologyUnhappinessTurns;
+}
+void CvPlayerCulture::SetSustainedIdeologyUnhappinessTurns(int iValue)
+{
+	m_iSustainedIdeologyUnhappinessTurns = max(0, iValue);
+}
+void CvPlayerCulture::ChangeSustainedIdeologyUnhappinessTurns(int iChange)
+{
+	SetSustainedIdeologyUnhappinessTurns(m_iSustainedIdeologyUnhappinessTurns + iChange);
+}
+
 /// How strong will a concert tour be right now?
 int CvPlayerCulture::GetTourismBlastStrength(int iMultiplier)
 {
@@ -3894,6 +3910,17 @@ FDataStream& operator>>(FDataStream& loadFrom, CvPlayerCulture& writeTo)
 		writeTo.m_iTurnIdeologySwitch = -1;
 
 	}
+
+	//MOD: saved sustained ideology-crisis turns; old saves start clean.
+	if (uiVersion >= 7)
+	{
+		loadFrom >> writeTo.m_iSustainedIdeologyUnhappinessTurns;
+	}
+	else
+	{
+		writeTo.m_iSustainedIdeologyUnhappinessTurns = 0;
+	}
+
 	if (uiVersion >= 4)
 	{
 		loadFrom >> writeTo.m_iSwappableWritingIndex;
@@ -3915,7 +3942,7 @@ FDataStream& operator>>(FDataStream& loadFrom, CvPlayerCulture& writeTo)
 /// Serialization write
 FDataStream& operator<<(FDataStream& saveTo, const CvPlayerCulture& readFrom)
 {
-	uint uiVersion = 6;
+	uint uiVersion = 7;
 	saveTo << uiVersion;
 
 	vector<CvPlot *>::const_iterator it;
@@ -3945,6 +3972,8 @@ FDataStream& operator<<(FDataStream& saveTo, const CvPlayerCulture& readFrom)
 	saveTo << readFrom.m_strOpinionUnhappinessTooltip;
 	saveTo << readFrom.m_eOpinionBiggestInfluence;
 	saveTo << readFrom.m_iTurnIdeologySwitch;
+	//MOD: persist sustained ideology-crisis turns across saves.
+	saveTo << readFrom.m_iSustainedIdeologyUnhappinessTurns;
 
 	saveTo << readFrom.m_iSwappableWritingIndex;
 	saveTo << readFrom.m_iSwappableArtIndex;

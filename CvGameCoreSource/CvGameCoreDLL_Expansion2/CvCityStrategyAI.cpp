@@ -396,6 +396,75 @@ namespace
 
 		return max(1, (iWeight * iProductionPercent) / 100);
 	}
+	//MOD: bias new world/team wonder attempts toward the best eligible production city.
+	int GetExperimentCityWonderProductionPercent(CvCity* pCity, CvPlayerAI& kPlayer, CvBuildingEntry* pkBuildingInfo)
+	{
+		if(pCity == NULL || pkBuildingInfo == NULL || !ShouldUseStrategyDirectiveAI(kPlayer.GetID()))
+		{
+			return 100;
+		}
+
+		const CvBuildingClassInfo& kBuildingClassInfo = pkBuildingInfo->GetBuildingClassInfo();
+		if(!isWorldWonderClass(kBuildingClassInfo) && !isTeamWonderClass(kBuildingClassInfo))
+		{
+			return 100;
+		}
+
+		const BuildingTypes eBuilding = (BuildingTypes)pkBuildingInfo->GetID();
+		int iBestProduction = 0;
+		int iCityLoop = 0;
+		for(CvCity* pLoopCity = kPlayer.firstCity(&iCityLoop); pLoopCity != NULL; pLoopCity = kPlayer.nextCity(&iCityLoop))
+		{
+			if(pLoopCity->IsPuppet() || !pLoopCity->canConstruct(eBuilding))
+			{
+				continue;
+			}
+
+			int iLoopProduction = pLoopCity->getCurrentProductionDifference(true, false);
+			iLoopProduction = (iLoopProduction * (100 + pLoopCity->GetWonderProductionModifier())) / 100;
+			iBestProduction = max(iBestProduction, iLoopProduction);
+		}
+
+		if(iBestProduction <= 0)
+		{
+			return 100;
+		}
+
+		int iCityProduction = pCity->getCurrentProductionDifference(true, false);
+		iCityProduction = (iCityProduction * (100 + pCity->GetWonderProductionModifier())) / 100;
+		if(iCityProduction >= iBestProduction)
+		{
+			return StrategyDirectiveAIConstants::TOP_CITY_WONDER_PERCENT;
+		}
+		if(iCityProduction * 100 >= iBestProduction * StrategyDirectiveAIConstants::STRONG_CITY_WONDER_PRODUCTION_PERCENT)
+		{
+			return StrategyDirectiveAIConstants::STRONG_CITY_WONDER_PERCENT;
+		}
+
+		return StrategyDirectiveAIConstants::WEAK_CITY_WONDER_PERCENT;
+	}
+
+	int AdjustExperimentCityProductionWonderWeight(CvCity* pCity, CvPlayerAI& kPlayer, CvBuildingEntry* pkBuildingInfo, int iWeight)
+	{
+		if(pCity == NULL || pkBuildingInfo == NULL || iWeight <= 0 || !ShouldUseStrategyDirectiveAI(kPlayer.GetID()))
+		{
+			return iWeight;
+		}
+
+		if(pCity->GetCityBuildings()->GetBuildingProduction((BuildingTypes)pkBuildingInfo->GetID()) > 0)
+		{
+			return iWeight;
+		}
+
+		const int iProductionPercent = GetExperimentCityWonderProductionPercent(pCity, kPlayer, pkBuildingInfo);
+		if(iProductionPercent == 100)
+		{
+			return iWeight;
+		}
+
+		return max(1, (iWeight * iProductionPercent) / 100);
+	}
+
 	int AdjustExperimentEarlyWonderWeight(CvCity* pCity, CvPlayerAI& kPlayer, CvBuildingEntry* pkBuildingInfo, int iWeight)
 	{
 		if(pCity == NULL || pkBuildingInfo == NULL || iWeight <= 0 || !ShouldUseStrategyDirectiveAI(kPlayer.GetID()))
@@ -631,6 +700,18 @@ namespace
 		}
 
 		if(IsExperimentNationalCollegePending(kPlayer))
+		{
+			return true;
+		}
+
+		const StrategyDirective& kDirective = kPlayer.GetGrandStrategyAI()->GetStrategyState().m_kDirective;
+		//MOD: recovery/defense directives should block all vanilla settler selection, not just capital-settler strategy.
+		if(!kDirective.m_bAllowCapitalSettlerStrategy || kDirective.m_bLowHappiness)
+		{
+			return true;
+		}
+
+		if(kDirective.m_bUniqueLuxuryExpansionBlocked)
 		{
 			return true;
 		}
@@ -1548,8 +1629,9 @@ void CvCityStrategyAI::ChooseProduction(bool bUseAsyncRandom, BuildingTypes eIgn
 			{
 				//MOD: support internal food trade routes by nudging Granaries, especially in expands
 				iTempWeight += GetExperimentGranaryWeight(GetCity(), kPlayer, eLoopBuilding);
-				//MOD: use global production strength to bias only new world/team wonder attempts
+				//MOD: use empire and city production strength to bias only new world/team wonder attempts
 				iTempWeight = AdjustExperimentGlobalProductionWonderWeight(GetCity(), kPlayer, pkBuildingInfo, iTempWeight);
+				iTempWeight = AdjustExperimentCityProductionWonderWeight(GetCity(), kPlayer, pkBuildingInfo, iTempWeight);
 				//MOD: strongly discourage early world/team wonder commitments without forbidding them
 				iTempWeight = AdjustExperimentEarlyWonderWeight(GetCity(), kPlayer, pkBuildingInfo, iTempWeight);
 			}

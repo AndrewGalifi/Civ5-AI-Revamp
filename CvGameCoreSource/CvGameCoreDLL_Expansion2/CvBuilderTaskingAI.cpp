@@ -32,8 +32,9 @@ namespace
 	const int AI_EXPERIMENT_CIVIL_SERVICE_FARM_TURNS = 10;
 	const int AI_EXPERIMENT_UNIQUE_LUXURY_IMPROVEMENT_BAND = 30000000;
 	const int AI_EXPERIMENT_LUXURY_IMPROVEMENT_BAND = 25000000;
+	const int AI_EXPERIMENT_RESOURCE_IMPROVEMENT_BAND = 22000000;
+	const int AI_EXPERIMENT_CIVIL_SERVICE_FARM_BAND = 18000000;
 	const int AI_EXPERIMENT_PRODUCTION_IMPROVEMENT_BAND = 15000000;
-	const int AI_EXPERIMENT_CIVIL_SERVICE_FARM_BAND = 12000000;
 	const int AI_EXPERIMENT_FOOD_IMPROVEMENT_BAND = 5000000;
 	const int AI_EXPERIMENT_PRIORITY_TIEBREAKER_DIVISOR = 10;
 
@@ -42,7 +43,7 @@ namespace
 		return pPlayer != NULL && ShouldUseStrategyDirectiveAI(pPlayer->GetID());
 	}
 
-	bool IsExperimentNearCivilService(CvPlayer* pPlayer)
+	bool IsExperimentNearOrHasCivilService(CvPlayer* pPlayer)
 	{
 		if(pPlayer == NULL)
 		{
@@ -50,9 +51,14 @@ namespace
 		}
 
 		const TechTypes eCivilService = (TechTypes)GC.getInfoTypeForString("TECH_CIVIL_SERVICE", true);
-		if(eCivilService == NO_TECH || GET_TEAM(pPlayer->getTeam()).GetTeamTechs()->HasTech(eCivilService))
+		if(eCivilService == NO_TECH)
 		{
 			return false;
+		}
+
+		if(GET_TEAM(pPlayer->getTeam()).GetTeamTechs()->HasTech(eCivilService))
+		{
+			return true;
 		}
 
 		CvPlayerTechs* pPlayerTechs = pPlayer->GetPlayerTechs();
@@ -71,14 +77,21 @@ namespace
 		if(eResource != NO_RESOURCE)
 		{
 			CvResourceInfo* pkResource = GC.getResourceInfo(eResource);
-			if(pkResource != NULL && pkResource->getResourceUsage() == RESOURCEUSAGE_LUXURY)
+			if(pkResource != NULL)
 			{
-				iPriorityBand = max(iPriorityBand, pPlayer->getNumResourceAvailable(eResource) == 0 ? AI_EXPERIMENT_UNIQUE_LUXURY_IMPROVEMENT_BAND : AI_EXPERIMENT_LUXURY_IMPROVEMENT_BAND);
+				if(pkResource->getResourceUsage() == RESOURCEUSAGE_LUXURY)
+				{
+					iPriorityBand = max(iPriorityBand, pPlayer->getNumResourceAvailable(eResource) == 0 ? AI_EXPERIMENT_UNIQUE_LUXURY_IMPROVEMENT_BAND : AI_EXPERIMENT_LUXURY_IMPROVEMENT_BAND);
+				}
+				else
+				{
+					iPriorityBand = max(iPriorityBand, AI_EXPERIMENT_RESOURCE_IMPROVEMENT_BAND);
+				}
 			}
 		}
 
 		const ImprovementTypes eFarm = (ImprovementTypes)GC.getInfoTypeForString("IMPROVEMENT_FARM", true);
-		if(eImprovement == eFarm && pPlot->isFreshWater() && IsExperimentNearCivilService(pPlayer))
+		if(eImprovement == eFarm && pPlot->isFreshWater() && IsExperimentNearOrHasCivilService(pPlayer))
 		{
 			iPriorityBand = max(iPriorityBand, AI_EXPERIMENT_CIVIL_SERVICE_FARM_BAND);
 		}

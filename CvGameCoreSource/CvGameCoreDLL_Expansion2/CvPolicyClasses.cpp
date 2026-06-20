@@ -3403,6 +3403,8 @@ void CvPlayerPolicies::DoSwitchIdeologies(PolicyBranchTypes eNewBranchType)
 	SetPolicyBranchUnlocked(eNewBranchType, true, true /*bRevolution*/);
 	m_pPlayer->GetCulture()->DoPublicOpinion();
 	m_pPlayer->GetCulture()->SetTurnIdeologySwitch(GC.getGame().getGameTurn());
+	//MOD: an actual ideology switch resolves any sustained ideology-crisis streak.
+	m_pPlayer->GetCulture()->SetSustainedIdeologyUnhappinessTurns(0);
 	m_pPlayer->setJONSCulture(0);
 	m_pPlayer->ChangeNumFreeTenets(iNewBranchTenets, false /*bCountAsFreePolicies*/);
 

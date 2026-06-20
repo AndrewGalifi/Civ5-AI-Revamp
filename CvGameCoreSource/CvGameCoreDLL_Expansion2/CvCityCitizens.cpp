@@ -480,6 +480,12 @@ int CvCityCitizens::GetPlotValue(CvPlot* pPlot, bool bUseAllowGrowthFlag)
 	int iCultureYieldValue = (GC.getAI_CITIZEN_VALUE_CULTURE() * pPlot->getYield(YIELD_CULTURE));
 	int iFaithYieldValue = (GC.getAI_CITIZEN_VALUE_FAITH() * pPlot->getYield(YIELD_FAITH));
 
+	//MOD: when producing settlers, work tiles for converted settler production instead of normal growth logic
+	if(ShouldUseStrategyDirectiveAI(GetOwner()) && m_pCity->isProductionUnit() && m_pCity->getProductionUnitAI() == UNITAI_SETTLE)
+	{
+		return (pPlot->getYield(YIELD_PRODUCTION) * 100) + (pPlot->getYield(YIELD_FOOD) * 50);
+	}
+
 	// How much surplus food are we making?
 	int iExcessFoodTimes100 = m_pCity->getYieldRateTimes100(YIELD_FOOD, false) - (m_pCity->foodConsumption() * 100);
 

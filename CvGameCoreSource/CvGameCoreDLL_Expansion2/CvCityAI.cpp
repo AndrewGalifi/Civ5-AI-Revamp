@@ -84,6 +84,34 @@ namespace
 		return iCount;
 	}
 
+	int CountExperimentOpeningScoutUnitsAndBuilds(CvPlayerAI& kOwner)
+	{
+		int iCount = 0;
+		int iLoop = 0;
+		for(CvUnit* pLoopUnit = kOwner.firstUnit(&iLoop); pLoopUnit != NULL; pLoopUnit = kOwner.nextUnit(&iLoop))
+		{
+			if(IsExperimentLandExplorer(&pLoopUnit->getUnitInfo()))
+			{
+				iCount++;
+			}
+		}
+
+		iLoop = 0;
+		for(CvCity* pLoopCity = kOwner.firstCity(&iLoop); pLoopCity != NULL; pLoopCity = kOwner.nextCity(&iLoop))
+		{
+			if(pLoopCity->isProductionUnit())
+			{
+				CvUnitEntry* pkUnitInfo = GC.getUnitInfo(pLoopCity->getProductionUnit());
+				if(IsExperimentLandExplorer(pkUnitInfo))
+				{
+					iCount++;
+				}
+			}
+		}
+
+		return iCount;
+	}
+
 	int CountExperimentOpeningLandCombatUnitsAndBuilds(CvPlayerAI& kOwner)
 	{
 		int iCount = 0;
@@ -531,15 +559,36 @@ namespace
 		return false;
 	}
 
-	bool TryChooseExperimentLuxuryWorkBoat(CvCityAI* pCity, CvPlayerAI& kOwner)
+	bool IsExperimentLuxuryWorkBoatNeeded(CvCityAI* pCity, CvPlayerAI& kOwner)
 	{
 		if(pCity == NULL || pCity->IsPuppet() || !ShouldUseStrategyDirectiveAI(kOwner.GetID()) || !HasExperimentUnimprovedOwnedWaterLuxury(pCity, kOwner))
 		{
 			return false;
 		}
 
+		const BuildingTypes eNationalCollege = GetExperimentBuildingForClass(kOwner, "BUILDINGCLASS_NATIONAL_COLLEGE");
+		if(IsExperimentCityProducingBuilding(pCity, eNationalCollege))
+		{
+			return false;
+		}
+
 		CvCity* pThreatenedCity = kOwner.GetMilitaryAI()->GetMostThreatenedCity();
 		if(pThreatenedCity == pCity && pThreatenedCity->getThreatValue() > 200 && IsExperimentLocalMilitaryDeficit(kOwner))
+		{
+			return false;
+		}
+
+		return IsExperimentCityProducingUnitAI(pCity, UNITAI_WORKER_SEA) || GetExperimentTrainableWaterWorkerUnit(pCity) != NO_UNIT;
+	}
+
+	bool IsExperimentLuxuryWorkBoatSwitchNeeded(CvCityAI* pCity, CvPlayerAI& kOwner)
+	{
+		return pCity != NULL && pCity->isProduction() && IsExperimentLuxuryWorkBoatNeeded(pCity, kOwner) && !IsExperimentCityProducingUnitAI(pCity, UNITAI_WORKER_SEA);
+	}
+
+	bool TryChooseExperimentLuxuryWorkBoat(CvCityAI* pCity, CvPlayerAI& kOwner)
+	{
+		if(!IsExperimentLuxuryWorkBoatNeeded(pCity, kOwner))
 		{
 			return false;
 		}
@@ -642,6 +691,46 @@ namespace
 		return true;
 	}
 
+	//MOD: choose the National College city by current production pace instead of hardcoding the capital.
+	CvCity* GetExperimentBestNationalCollegeCity(CvPlayerAI& kOwner, BuildingTypes eNationalCollege)
+	{
+		if(eNationalCollege == NO_BUILDING)
+		{
+			return NULL;
+		}
+
+		CvCity* pBestCity = NULL;
+		int iBestProductionPerTurn = -1;
+
+		int iCityLoop = 0;
+		for(CvCity* pLoopCity = kOwner.firstCity(&iCityLoop); pLoopCity != NULL; pLoopCity = kOwner.nextCity(&iCityLoop))
+		{
+			if(pLoopCity->IsPuppet())
+			{
+				continue;
+			}
+
+			if(pLoopCity->getFirstBuildingOrder(eNationalCollege) != -1)
+			{
+				return pLoopCity;
+			}
+
+			if(!pLoopCity->canConstruct(eNationalCollege))
+			{
+				continue;
+			}
+
+			const int iProductionPerTurn = pLoopCity->getCurrentProductionDifference(true, false);
+			if(pBestCity == NULL || iProductionPerTurn > iBestProductionPerTurn || (iProductionPerTurn == iBestProductionPerTurn && pLoopCity->isCapital() && !pBestCity->isCapital()))
+			{
+				iBestProductionPerTurn = iProductionPerTurn;
+				pBestCity = pLoopCity;
+			}
+		}
+
+		return pBestCity;
+	}
+
 	BuildingTypes GetExperimentScienceInfrastructureBuilding(CvCityAI* pCity, CvPlayerAI& kOwner)
 	{
 		if(pCity == NULL || pCity->IsPuppet() || !ShouldUseStrategyDirectiveAI(kOwner.GetID()) || GC.getGame().getGameTurn() < StrategyDirectiveAIConstants::SCIENCE_INFRASTRUCTURE_PRIORITY_TURN)
@@ -652,7 +741,8 @@ namespace
 		if(IsExperimentNationalCollegePending(kOwner))
 		{
 			const BuildingTypes eNationalCollege = GetExperimentBuildingForClass(kOwner, "BUILDINGCLASS_NATIONAL_COLLEGE");
-			if(pCity->isCapital() && eNationalCollege != NO_BUILDING && pCity->canConstruct(eNationalCollege))
+			CvCity* pNationalCollegeCity = GetExperimentBestNationalCollegeCity(kOwner, eNationalCollege);
+			if(pNationalCollegeCity == pCity)
 			{
 				return eNationalCollege;
 			}
@@ -874,7 +964,7 @@ namespace
 			return false;
 		}
 
-		if(CountExperimentLandExplorersAndBuilds(kOwner) >= AI_EXPERIMENT_TARGET_LAND_EXPLORERS)
+		if(CountExperimentOpeningScoutUnitsAndBuilds(kOwner) >= AI_EXPERIMENT_TARGET_LAND_EXPLORERS)
 		{
 			return false;
 		}
@@ -913,7 +1003,7 @@ namespace
 
 		UnitTypes eUnit = NO_UNIT;
 		UnitAITypes eUnitAI = NO_UNITAI;
-		if(CountExperimentLandExplorersAndBuilds(kOwner) < AI_EXPERIMENT_TARGET_LAND_EXPLORERS)
+		if(CountExperimentOpeningScoutUnitsAndBuilds(kOwner) < AI_EXPERIMENT_TARGET_LAND_EXPLORERS)
 		{
 			eUnitAI = UNITAI_EXPLORE;
 			eUnit = GetExperimentTrainableLandUnit(pCity, eUnitAI);
@@ -1084,6 +1174,10 @@ void CvCityAI::AI_doTurn()
 		{
 			AI_chooseProduction(false /*bInterruptWonders*/);
 		}
+		else if(isProduction() && IsExperimentLuxuryWorkBoatSwitchNeeded(this, kOwner))
+		{
+			AI_chooseProduction(false /*bInterruptWonders*/);
+		}
 		else if(isProduction() && IsExperimentScienceInfrastructureSwitchNeeded(this, kOwner))
 		{
 			AI_chooseProduction(false /*bInterruptWonders*/);
@@ -1107,6 +1201,12 @@ void CvCityAI::AI_chooseProduction(bool bInterruptWonders)
 	bool bBuildWonder = false;
 	//MOD: force the first scout before any other opening override
 	if(TryChooseExperimentOpeningScout(this, kOwner))
+	{
+		return;
+	}
+
+	//MOD: force luxury Work Boats before broader production priorities, unless this city is directly threatened
+	if(TryChooseExperimentLuxuryWorkBoat(this, kOwner))
 	{
 		return;
 	}
@@ -1135,11 +1235,6 @@ void CvCityAI::AI_chooseProduction(bool bInterruptWonders)
 		return;
 	}
 
-	//MOD: force luxury Work Boats before broader non-science building priorities, unless this city is directly threatened
-	if(TryChooseExperimentLuxuryWorkBoat(this, kOwner))
-	{
-		return;
-	}
 
 	//MOD: force a minimal opening Scout/combat baseline before vanilla production choice
 	if(TryChooseExperimentOpeningBuild(this, kOwner))
@@ -1149,6 +1244,11 @@ void CvCityAI::AI_chooseProduction(bool bInterruptWonders)
 
 	//MOD: replace missing land recon before vanilla production choice
 	if(TryChooseExperimentReconScout(this, kOwner))
+	{
+		return;
+	}
+	//MOD: expansion directive should directly claim settler production before softer worker/trade priorities
+	if(TryChooseExperimentExpansionSettler(this, kOwner))
 	{
 		return;
 	}

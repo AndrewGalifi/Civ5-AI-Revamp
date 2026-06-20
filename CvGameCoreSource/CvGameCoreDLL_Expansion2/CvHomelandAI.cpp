@@ -14,12 +14,196 @@
 #include "CvWonderProductionAI.h"
 #include "CvCitySpecializationAI.h"
 #include "CvGrandStrategyAI.h"
+#include "CvMilitaryAI.h"
 #include "cvStopWatch.h"
 #include "CvTypes.h"
 
 // must be included after all other headers
 #include "LintFree.h"
 
+//MOD: threatened-city military responses should distribute reserves by city threat instead of only using the top city.
+const int AI_EXPERIMENT_THREATENED_CITY_DEFENSE_PRIORITY_BONUS = 35;
+const int AI_EXPERIMENT_THREATENED_CITY_RESERVE_PRIORITY_BONUS = 30;
+const int AI_EXPERIMENT_THREATENED_CITY_RESERVE_RADIUS = 2;
+const int AI_EXPERIMENT_THREATENED_CITY_RESERVE_TARGETS_PER_CITY = 4;
+
+static bool ShouldExperimentConcentrateThreatenedCityDefense(CvPlayer* pPlayer)
+{
+	if(pPlayer == NULL || !ShouldUseStrategyDirectiveAI(pPlayer->GetID()))
+	{
+		return false;
+	}
+
+	const StrategyState& kState = pPlayer->GetGrandStrategyAI()->GetStrategyState();
+	const StrategyDirective& kDirective = kState.m_kDirective;
+	if(!kDirective.m_bMilitaryProductionUrgent || kDirective.m_iMilitaryThreatSeverity < StrategyDirectiveAIConstants::MILITARY_THREAT_MODERATE)
+	{
+		return false;
+	}
+
+	CvCity* pThreatenedCity = pPlayer->GetMilitaryAI()->GetMostThreatenedCity();
+	return pThreatenedCity != NULL && pThreatenedCity->getThreatValue() >= StrategyDirectiveAIConstants::MILITARY_THREAT_MODERATE_CITY_THREAT_VALUE;
+}
+
+static bool TryUpdateExperimentReserveTarget(std::vector<CvHomelandTarget>& kTargets, CvHomelandTarget& kNewTarget)
+{
+	for(std::vector<CvHomelandTarget>::iterator it = kTargets.begin(); it != kTargets.end(); ++it)
+	{
+		if(it->GetTargetType() == kNewTarget.GetTargetType() && it->GetTargetX() == kNewTarget.GetTargetX() && it->GetTargetY() == kNewTarget.GetTargetY())
+		{
+			if(kNewTarget.GetAuxIntData() > it->GetAuxIntData())
+			{
+				it->SetAuxIntData(kNewTarget.GetAuxIntData());
+				it->SetAuxData(kNewTarget.GetAuxData());
+			}
+			return true;
+		}
+	}
+
+	return false;
+}
+
+static void AddExperimentThreatenedCityReserveTargets(CvPlayer* pPlayer, std::vector<CvHomelandTarget>& kTargets)
+{
+	if(!ShouldExperimentConcentrateThreatenedCityDefense(pPlayer))
+	{
+		return;
+	}
+
+	const PlayerTypes eOwner = pPlayer->GetID();
+	const int iThreatPerReserveTarget = StrategyDirectiveAIConstants::MILITARY_THREAT_MODERATE_CITY_THREAT_VALUE;
+	int iCityLoop = 0;
+	for(CvCity* pThreatenedCity = pPlayer->firstCity(&iCityLoop); pThreatenedCity != NULL; pThreatenedCity = pPlayer->nextCity(&iCityLoop))
+	{
+		const int iCityThreat = pThreatenedCity->getThreatValue();
+		if(iCityThreat < StrategyDirectiveAIConstants::MILITARY_THREAT_MODERATE_CITY_THREAT_VALUE)
+		{
+			continue;
+		}
+
+		std::vector<CvHomelandTarget> aCityTargets;
+		for(int iDX = -AI_EXPERIMENT_THREATENED_CITY_RESERVE_RADIUS; iDX <= AI_EXPERIMENT_THREATENED_CITY_RESERVE_RADIUS; iDX++)
+		{
+			for(int iDY = -AI_EXPERIMENT_THREATENED_CITY_RESERVE_RADIUS; iDY <= AI_EXPERIMENT_THREATENED_CITY_RESERVE_RADIUS; iDY++)
+			{
+				CvPlot* pLoopPlot = plotXYWithRangeCheck(pThreatenedCity->getX(), pThreatenedCity->getY(), iDX, iDY, AI_EXPERIMENT_THREATENED_CITY_RESERVE_RADIUS);
+				if(pLoopPlot == NULL || pLoopPlot->isWater() || pLoopPlot->isImpassable() || pLoopPlot->getOwner() != eOwner || pLoopPlot->isVisibleEnemyUnit(eOwner))
+				{
+					continue;
+				}
+
+				if(pLoopPlot->getNumDefenders(eOwner) > 0)
+				{
+					continue;
+				}
+
+				const int iDistance = plotDistance(pThreatenedCity->getX(), pThreatenedCity->getY(), pLoopPlot->getX(), pLoopPlot->getY());
+				if(iDistance <= 0 || iDistance > AI_EXPERIMENT_THREATENED_CITY_RESERVE_RADIUS)
+				{
+					continue;
+				}
+
+				CvHomelandTarget newTarget;
+				newTarget.SetTargetType(AI_HOMELAND_TARGET_HOME_ROAD);
+				newTarget.SetTargetX(pLoopPlot->getX());
+				newTarget.SetTargetY(pLoopPlot->getY());
+				newTarget.SetAuxData(pLoopPlot);
+				newTarget.SetAuxIntData((iCityThreat * 10) + ((AI_EXPERIMENT_THREATENED_CITY_RESERVE_RADIUS + 1 - iDistance) * 1000) + pLoopPlot->defenseModifier(pPlayer->getTeam(), true));
+				aCityTargets.push_back(newTarget);
+			}
+		}
+
+		std::stable_sort(aCityTargets.begin(), aCityTargets.end());
+		const int iCityTargetLimit = min(AI_EXPERIMENT_THREATENED_CITY_RESERVE_TARGETS_PER_CITY, max(1, iCityThreat / iThreatPerReserveTarget));
+		for(int iTargetIndex = 0; iTargetIndex < iCityTargetLimit && iTargetIndex < (int)aCityTargets.size(); iTargetIndex++)
+		{
+			if(!TryUpdateExperimentReserveTarget(kTargets, aCityTargets[iTargetIndex]))
+			{
+				kTargets.push_back(aCityTargets[iTargetIndex]);
+			}
+		}
+	}
+}
+//END MOD
+//MOD: unassigned settlers outside our borders should return home instead of skipping turns in the field.
+static bool ShouldExperimentSettlerReturnToEmpire(const CvPlayer* pPlayer)
+{
+	return pPlayer != NULL && ShouldUseStrategyDirectiveAI(pPlayer->GetID());
+}
+
+static CvPlot* GetExperimentSettlerReturnPlot(CvPlayer* pPlayer, CvUnit* pUnit)
+{
+	if(pPlayer == NULL || pUnit == NULL || pUnit->AI_getUnitAIType() != UNITAI_SETTLE || !ShouldExperimentSettlerReturnToEmpire(pPlayer))
+	{
+		return NULL;
+	}
+
+	if(pUnit->plot() != NULL && pUnit->plot()->getOwner() == pPlayer->GetID())
+	{
+		return NULL;
+	}
+
+	CvMap& kMap = GC.getMap();
+	CvPlot* pBestPlot = NULL;
+	int iBestValue = MIN_INT;
+	const PlayerTypes eOwner = pPlayer->GetID();
+
+	for(int iPlotLoop = 0; iPlotLoop < kMap.numPlots(); iPlotLoop++)
+	{
+		CvPlot* pLoopPlot = kMap.plotByIndexUnchecked(iPlotLoop);
+		if(pLoopPlot == NULL || pLoopPlot->getOwner() != eOwner || pLoopPlot->isVisibleEnemyUnit(pUnit))
+		{
+			continue;
+		}
+
+		if(!pUnit->canMoveInto(*pLoopPlot, CvUnit::MOVEFLAG_DESTINATION | CvUnit::MOVEFLAG_PRETEND_CORRECT_EMBARK_STATE))
+		{
+			continue;
+		}
+
+		int iPathTurns = 0;
+		if(!pUnit->GeneratePath(pLoopPlot, MOVE_UNITS_IGNORE_DANGER, true, &iPathTurns))
+		{
+			continue;
+		}
+
+		const int iDanger = pPlayer->GetPlotDanger(*pLoopPlot);
+		int iValue = 10000 - (iPathTurns * 250) - (plotDistance(pUnit->getX(), pUnit->getY(), pLoopPlot->getX(), pLoopPlot->getY()) * 10) - (iDanger * 100);
+
+		CvCity* pCity = pLoopPlot->getPlotCity();
+		if(pCity != NULL && pCity->getOwner() == eOwner)
+		{
+			iValue += 5000;
+		}
+		else
+		{
+			for(int iDirectionLoop = 0; iDirectionLoop < NUM_DIRECTION_TYPES; iDirectionLoop++)
+			{
+				CvPlot* pAdjacentPlot = plotDirection(pLoopPlot->getX(), pLoopPlot->getY(), ((DirectionTypes)iDirectionLoop));
+				CvCity* pAdjacentCity = (pAdjacentPlot != NULL)? pAdjacentPlot->getPlotCity() : NULL;
+				if(pAdjacentCity != NULL && pAdjacentCity->getOwner() == eOwner)
+				{
+					iValue += 1000;
+					break;
+				}
+			}
+		}
+
+		if(iDanger == 0)
+		{
+			iValue += 750;
+		}
+
+		if(iValue > iBestValue)
+		{
+			iBestValue = iValue;
+			pBestPlot = pLoopPlot;
+		}
+	}
+
+	return pBestPlot;
+}
+//END MOD
 CvHomelandUnit::CvHomelandUnit() :
 	m_iID(0)
 	, m_iAuxData(0)
@@ -487,6 +671,24 @@ void CvHomelandAI::EstablishHomelandPriorities()
 				break;
 			}
 
+			//MOD: When the strategy layer detects a real city threat, spend homeland moves near that city before generic sentry/reserve wandering.
+			if(ShouldExperimentConcentrateThreatenedCityDefense(m_pPlayer))
+			{
+				switch((AIHomelandMove)iI)
+				{
+				case AI_HOMELAND_MOVE_GARRISON:
+					iPriority += AI_EXPERIMENT_THREATENED_CITY_DEFENSE_PRIORITY_BONUS;
+					break;
+				case AI_HOMELAND_MOVE_MOBILE_RESERVE:
+					iPriority += AI_EXPERIMENT_THREATENED_CITY_RESERVE_PRIORITY_BONUS;
+					break;
+				case AI_HOMELAND_MOVE_SENTRY:
+					iPriority -= AI_EXPERIMENT_THREATENED_CITY_RESERVE_PRIORITY_BONUS;
+					break;
+				}
+			}
+			//END MOD
+
 			// Store off this move and priority
 			CvHomelandMove move;
 			move.m_eMoveType = (AIHomelandMove)iI;
@@ -678,6 +880,10 @@ void CvHomelandAI::FindHomelandTargets()
 	// Post-processing on targets
 	EliminateAdjacentSentryPoints();
 	EliminateAdjacentHomelandRoads();
+	//MOD: Add high-value reserve points near threatened cities after generic road pruning.
+	AddExperimentThreatenedCityReserveTargets(m_pPlayer, m_TargetedHomelandRoads);
+	std::stable_sort(m_TargetedHomelandRoads.begin(), m_TargetedHomelandRoads.end());
+	//END MOD
 	std::stable_sort(m_TargetedCities.begin(), m_TargetedCities.end());
 }
 
@@ -2081,6 +2287,23 @@ void CvHomelandAI::ReviewUnassignedUnits()
 		UnitHandle pUnit = m_pPlayer->getUnit(*it);
 		if(pUnit)
 		{
+			//MOD: Unassigned settlers should wait inside our empire instead of skipping turns in exposed territory.
+			CvPlot* pReturnPlot = GetExperimentSettlerReturnPlot(m_pPlayer, pUnit.pointer());
+			if(pReturnPlot != NULL)
+			{
+				pUnit->PushMission(CvTypes::getMISSION_MOVE_TO(), pReturnPlot->getX(), pReturnPlot->getY(), MOVE_UNITS_IGNORE_DANGER);
+				pUnit->SetTurnProcessed(true);
+
+				if(GC.getLogging() && GC.getAILogging())
+				{
+					CvString strLogString;
+					strLogString.Format("Returning unassigned settler to owned territory, X: %d, Y: %d", pReturnPlot->getX(), pReturnPlot->getY());
+					LogHomelandMessage(strLogString);
+				}
+				continue;
+			}
+			//END MOD
+
 			pUnit->PushMission(CvTypes::getMISSION_SKIP());
 			pUnit->SetTurnProcessed(true);
 

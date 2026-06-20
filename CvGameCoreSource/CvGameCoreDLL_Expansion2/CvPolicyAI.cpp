@@ -29,6 +29,11 @@ namespace
 		{"POLICY_BRANCH_RATIONALISM", 1500, 500}
 	};
 
+	//MOD: ideology crisis thresholds for switching before sustained revolt pressure costs cities.
+	const int AI_EXPERIMENT_IDEOLOGY_CRISIS_HAPPINESS_THRESHOLD = -6;
+	const int AI_EXPERIMENT_IDEOLOGY_CRISIS_TURNS = 10;
+	const int AI_EXPERIMENT_IDEOLOGY_REVOLT_CRISIS_TURNS = 1;
+
 	bool IsExperimentPolicyPlayer(CvPlayer* pPlayer)
 	{
 		return pPlayer != NULL && !pPlayer->isMinorCiv() && ShouldUseStrategyDirectiveAI(pPlayer->GetID());
@@ -635,6 +640,37 @@ void CvPolicyAI::DoConsiderIdeologySwitch(CvPlayer* pPlayer)
 	PolicyBranchTypes eCurrentIdeology = pPlayer->GetPlayerPolicies()->GetLateGamePolicyTree();
 	PlayerTypes eMostPressure = pPlayer->GetCulture()->GetPublicOpinionBiggestInfluence();
 	
+	//MOD: if experiment AI is stuck below -6 happiness due to losing-ideology pressure, switch to the pressure-preferred ideology before revolts cost cities.
+	if(IsExperimentPolicyPlayer(pPlayer))
+	{
+		bool bIdeologyCrisis = false;
+		if(eCurrentIdeology != NO_POLICY_BRANCH_TYPE && ePreferredIdeology != NO_POLICY_BRANCH_TYPE && ePreferredIdeology != eCurrentIdeology && iCurrentHappiness < AI_EXPERIMENT_IDEOLOGY_CRISIS_HAPPINESS_THRESHOLD && iPublicOpinionUnhappiness > 0)
+		{
+			const int iPreferredPublicOpinionUnhappiness = pPlayer->GetCulture()->ComputeHypotheticalPublicOpinionUnhappiness(ePreferredIdeology);
+			bIdeologyCrisis = (iPreferredPublicOpinionUnhappiness < iPublicOpinionUnhappiness);
+		}
+
+		if(bIdeologyCrisis)
+		{
+			pPlayer->GetCulture()->ChangeSustainedIdeologyUnhappinessTurns(1);
+		}
+		else
+		{
+			pPlayer->GetCulture()->SetSustainedIdeologyUnhappinessTurns(0);
+		}
+
+		const int iSustainedIdeologyUnhappinessTurns = pPlayer->GetCulture()->GetSustainedIdeologyUnhappinessTurns();
+		const bool bRevoltLevelIdeologyCrisis = bIdeologyCrisis && iCurrentHappiness <= GC.getSUPER_UNHAPPY_THRESHOLD() && iSustainedIdeologyUnhappinessTurns >= AI_EXPERIMENT_IDEOLOGY_REVOLT_CRISIS_TURNS;
+		const bool bSustainedIdeologyCrisis = iSustainedIdeologyUnhappinessTurns > AI_EXPERIMENT_IDEOLOGY_CRISIS_TURNS;
+
+		if(bRevoltLevelIdeologyCrisis || bSustainedIdeologyCrisis)
+		{
+			pPlayer->SetAnarchyNumTurns(GC.getSWITCH_POLICY_BRANCHES_ANARCHY_TURNS());
+			pPlayer->GetPlayerPolicies()->DoSwitchIdeologies(ePreferredIdeology);
+			return;
+		}
+	}
+
 	// Possible enough that we need to look at this in detail?
 	if (iCurrentHappiness <= GC.getSUPER_UNHAPPY_THRESHOLD() && iPublicOpinionUnhappiness >= 10)
 	{

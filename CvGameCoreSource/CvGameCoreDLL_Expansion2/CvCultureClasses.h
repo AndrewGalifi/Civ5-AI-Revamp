@@ -243,6 +243,9 @@ public:
 	PlayerTypes GetPublicOpinionBiggestInfluence() const;
 	int GetTurnIdeologySwitch() const;
 	void SetTurnIdeologySwitch(int iTurn);
+	int GetSustainedIdeologyUnhappinessTurns() const;
+	void SetSustainedIdeologyUnhappinessTurns(int iTurns);
+	void ChangeSustainedIdeologyUnhappinessTurns(int iChange);
 	int GetTourismBlastStrength(int iMultiplier);
 	void AddTourismAllKnownCivs(int iTourism);
 	void DoPublicOpinion();
@@ -263,6 +266,8 @@ public:
 	PublicOpinionTypes m_eOpinion;
 	PlayerTypes m_eOpinionBiggestInfluence;
 	int m_iTurnIdeologySwitch;
+	//MOD: track sustained ideology-driven unhappiness so AI can switch before revolts destroy cities.
+	int m_iSustainedIdeologyUnhappinessTurns;
 	PolicyBranchTypes m_ePreferredIdeology;
 	int m_iOpinionUnhappiness;
 	CvString m_strOpinionTooltip;

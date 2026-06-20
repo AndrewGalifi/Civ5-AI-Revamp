@@ -15,12 +15,11 @@
 //MOD: shared summary/directive types and experiment gate
 namespace StrategyDirectiveAIConstants
 {
-	const int WORKER_BASE_RATIO_TURN = 40;
+	const int WORKER_BASE_RATIO_TURN = 50;
 	const int WORKER_FULL_RATIO_TURN = 90;
 
 	const int SCIENCE_INFRASTRUCTURE_PRIORITY_TURN = 57;
-	const int NC_CITY_FOUNDING_SUPPRESSION_TURN = 55;
-	const int NC_SETTLE_SITE_VALUE_SUPPRESSION_TURN = 50;
+	const int NC_CITY_FOUNDING_SUPPRESSION_TURN = 60;
 	const int NC_TECH_PATH_PRIORITY_TURN = 45;
 
 	const int MAX_SETTLE_PATH_DISTANCE_FROM_CITY = 8;
@@ -34,8 +33,12 @@ namespace StrategyDirectiveAIConstants
 	const int EARLY_WONDER_FOLLOWUP_PERCENT = 5;
 	const int EXPANSION_WONDER_PERCENT = 1;
 	const int NC_PENDING_WONDER_PERCENT = 5;
-	const int TOP_PRODUCTION_WONDER_PERCENT = 130;
+	const int TOP_PRODUCTION_WONDER_PERCENT = 115;
 	const int BELOW_AVERAGE_PRODUCTION_WONDER_PERCENT = 65;
+	const int TOP_CITY_WONDER_PERCENT = 250;
+	const int STRONG_CITY_WONDER_PERCENT = 125;
+	const int WEAK_CITY_WONDER_PERCENT = 25;
+	const int STRONG_CITY_WONDER_PRODUCTION_PERCENT = 85;
 
 	const int RANGED_TARGET_RATIO_DIVISOR = 3;
 
@@ -48,6 +51,11 @@ namespace StrategyDirectiveAIConstants
 	const int MILITARY_THREAT_MODERATE_CITY_THREAT_VALUE = 5000;
 	const int MILITARY_THREAT_HIGH_CITY_THREAT_VALUE = 25000;
 	const int MILITARY_RELEVANT_SHORTFALL_TARGET_PERCENT = 75;
+	const int OVERWHELMING_MILITARY_WORLD_PERCENT = 200;
+	const int OVERWHELMING_MILITARY_RELEVANT_PERCENT = 300;
+	const int TREASURY_OVERRIDE_DEEP_DEFICIT_TIMES100 = 5000;
+
+	const int PRIMARY_STRATEGY_CONFIRM_TURNS = 2;
 }
 
 // Compact game-state snapshot used by higher-level strategic planning.
@@ -98,6 +106,7 @@ struct GameStateSummary
 	int m_iTurnsSinceSettledLastCity;
 	int m_iBestSettleAreaCount;
 	int m_iUniqueLuxurySettleSiteCount;
+	int m_iOwnedUniqueLuxuryCount;
 	int m_iSettlersOnMap;
 	bool m_bEconomicEnoughExpansion;
 
@@ -133,6 +142,7 @@ struct StrategyDirective
 	bool m_bExpansionTargetAvailable;
 	bool m_bExpansionRoomAvailable;
 	bool m_bCanConsiderExpansion;
+	bool m_bUniqueLuxuryExpansionBlocked;
 	bool m_bEarlyExpansionPhase;
 	bool m_bRecentExpansion;
 	bool m_bStrongExpansionWindow;
@@ -258,6 +268,9 @@ private:
 	StrategyState m_kCachedStrategyState;
 	int m_iCachedStrategyStateTurn;
 	bool m_bStrategyStateCached;
+	int m_iMilitaryDirectiveCandidateTurns;
+	int m_iTreasuryRecoveryCandidateTurns;
+	int m_iStrategyDirectivePersistenceTurn;
 
 	// **********
 	// Stuff relating to guessing what other Players are up to
