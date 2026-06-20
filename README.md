@@ -9,7 +9,7 @@ The core idea is:
 2. Select a `StrategyDirective` such as expansion, development, military response, treasury recovery, or happiness recovery.
 3. Apply scoped biases and/or hard pivots to existing AI subsystems (production, food, science, etc).
 
-Note: current source modifications only affect player 1 for testing purposes.
+Note: current source modifications only affect player 1 for testing purposes, and for now are only designed for Quick game speed. 
 
 ## Repository Layout
 
