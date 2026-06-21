@@ -12,6 +12,8 @@
 #include "CvDiplomacyAI.h"
 #include "CvMinorCivAI.h"
 #include "CvMilitaryAI.h"
+#include "CvAIOperation.h"
+#include "CvArmyAI.h"
 #include "CvGameCoreUtils.h"
 #include "CvInternalGameCoreUtils.h"
 #include "ICvDLLUserInterface.h"
@@ -21,6 +23,9 @@
 
 namespace
 {
+	void AppendExperimentAnalysisLog(CvString& strHeader, CvString& strLog, const char* szHeaderValue, const char* szValue);
+	void AppendExperimentAnalysisLog(CvString& strHeader, CvString& strLog, const char* szHeaderValue, int iValue);
+
 	//MOD: diagnostic string helpers
 	const char* GetPrimaryStrategyDirectiveName(StrategyDirectivePrimaryTypes ePrimaryStrategy)
 	{
@@ -44,6 +49,111 @@ namespace
 		}
 	}
 
+	//MOD: diagnostics for stalled war preparation and operation launch state
+	CvAIOperation* GetExperimentWarPrepOperation(CvPlayer* pPlayer, CvDiplomacyAI* pDiploAI, PlayerTypes eRival, const char** pszOperationSource)
+	{
+		if(pszOperationSource != NULL)
+		{
+			*pszOperationSource = "NONE";
+		}
+
+		if(pPlayer == NULL || pDiploAI == NULL || pPlayer->GetMilitaryAI() == NULL)
+		{
+			return NULL;
+		}
+
+		CvAIOperation* pOperation = NULL;
+		if(pDiploAI->GetWarGoal(eRival) == WAR_GOAL_DEMAND)
+		{
+			pOperation = pPlayer->GetMilitaryAI()->GetShowOfForceOperation(eRival);
+			if(pOperation != NULL && pszOperationSource != NULL)
+			{
+				*pszOperationSource = "SHOW_OF_FORCE";
+			}
+		}
+		else
+		{
+			pOperation = pPlayer->GetMilitaryAI()->GetSneakAttackOperation(eRival);
+			if(pOperation != NULL && pszOperationSource != NULL)
+			{
+				*pszOperationSource = "SNEAK_ATTACK";
+			}
+		}
+
+		return pOperation;
+	}
+
+	void AppendExperimentWarPrepDiagnostics(CvString& strHeader, CvString& strLog, CvPlayer* pPlayer, CvDiplomacyAI* pDiploAI, PlayerTypes eRival)
+	{
+		const char* szOperationSource = "NONE";
+		CvAIOperation* pOperation = GetExperimentWarPrepOperation(pPlayer, pDiploAI, eRival, &szOperationSource);
+		CvArmyAI* pArmy = NULL;
+		CvPlot* pMusterPlot = NULL;
+		CvPlot* pTargetPlot = NULL;
+		CvPlot* pArmyPlot = NULL;
+		int iArmyID = -1;
+
+		if(pOperation != NULL)
+		{
+			iArmyID = pOperation->GetFirstArmyID();
+			pMusterPlot = pOperation->GetMusterPlot();
+			pTargetPlot = pOperation->GetTargetPlot();
+
+			if(iArmyID != -1 && pPlayer != NULL)
+			{
+				pArmy = pPlayer->getArmyAI(iArmyID);
+				if(pArmy != NULL)
+				{
+					pArmyPlot = pArmy->Plot();
+				}
+			}
+		}
+
+		AppendExperimentAnalysisLog(strHeader, strLog, "WarPrepMustering", pDiploAI != NULL && pDiploAI->IsMusteringForAttack(eRival) ? 1 : 0);
+		AppendExperimentAnalysisLog(strHeader, strLog, "WarPrepOperationSource", szOperationSource);
+		AppendExperimentAnalysisLog(strHeader, strLog, "WarPrepOperationType", pOperation != NULL ? pOperation->GetOperationType() : -1);
+		AppendExperimentAnalysisLog(strHeader, strLog, "WarPrepOperationState", pOperation != NULL ? (int)pOperation->GetOperationState() : -1);
+		AppendExperimentAnalysisLog(strHeader, strLog, "WarPrepProgressPct", pOperation != NULL ? pOperation->PercentFromMusterPointToTarget() : -1);
+		AppendExperimentAnalysisLog(strHeader, strLog, "WarPrepArmyID", iArmyID);
+		AppendExperimentAnalysisLog(strHeader, strLog, "WarPrepArmyState", pArmy != NULL ? (int)pArmy->GetArmyAIState() : -1);
+		AppendExperimentAnalysisLog(strHeader, strLog, "WarPrepArmySlotsFilled", pArmy != NULL ? pArmy->GetNumSlotsFilled() : -1);
+		AppendExperimentAnalysisLog(strHeader, strLog, "WarPrepArmySlotsTotal", pArmy != NULL ? pArmy->GetNumFormationEntries() : -1);
+		AppendExperimentAnalysisLog(strHeader, strLog, "WarPrepUnitsNeededToBuild", pOperation != NULL ? (int)pOperation->GetNumUnitsNeededToBeBuilt() : -1);
+		AppendExperimentAnalysisLog(strHeader, strLog, "WarPrepMusterX", pMusterPlot != NULL ? pMusterPlot->getX() : -1);
+		AppendExperimentAnalysisLog(strHeader, strLog, "WarPrepMusterY", pMusterPlot != NULL ? pMusterPlot->getY() : -1);
+		AppendExperimentAnalysisLog(strHeader, strLog, "WarPrepTargetX", pTargetPlot != NULL ? pTargetPlot->getX() : -1);
+		AppendExperimentAnalysisLog(strHeader, strLog, "WarPrepTargetY", pTargetPlot != NULL ? pTargetPlot->getY() : -1);
+		AppendExperimentAnalysisLog(strHeader, strLog, "WarPrepArmyX", pArmyPlot != NULL ? pArmyPlot->getX() : -1);
+		AppendExperimentAnalysisLog(strHeader, strLog, "WarPrepArmyY", pArmyPlot != NULL ? pArmyPlot->getY() : -1);
+	}
+
+	void AppendExperimentSneakRequestDiagnostics(CvString& strHeader, CvString& strLog, CvPlayer* pPlayer, PlayerTypes eRival)
+	{
+		CvMilitaryAI* pMilitaryAI = pPlayer != NULL ? pPlayer->GetMilitaryAI() : NULL;
+		const CvMilitarySneakAttackRequestLog* pRequestLog = pMilitaryAI != NULL ? &pMilitaryAI->GetLastSneakAttackRequestLog() : NULL;
+		const bool bMatchesRival = pRequestLog != NULL && pRequestLog->m_iTargetPlayer == eRival;
+
+		AppendExperimentAnalysisLog(strHeader, strLog, "ArmyBeingBuilt", pMilitaryAI != NULL ? (int)pMilitaryAI->GetArmyBeingBuilt() : -1);
+		AppendExperimentAnalysisLog(strHeader, strLog, "SneakRequestTurn", bMatchesRival ? pRequestLog->m_iTurn : -1);
+		AppendExperimentAnalysisLog(strHeader, strLog, "SneakRequestResult", bMatchesRival ? pRequestLog->m_iResult : -1);
+		AppendExperimentAnalysisLog(strHeader, strLog, "SneakRequestOperationType", bMatchesRival ? pRequestLog->m_iOperationType : -1);
+		AppendExperimentAnalysisLog(strHeader, strLog, "SneakRequestFormation", bMatchesRival ? pRequestLog->m_iFormation : -1);
+		AppendExperimentAnalysisLog(strHeader, strLog, "SneakRequestAttackReady", bMatchesRival ? pRequestLog->m_iAttackReady : -1);
+		AppendExperimentAnalysisLog(strHeader, strLog, "SneakRequestAttackBySea", bMatchesRival ? pRequestLog->m_iAttackBySea : -1);
+		AppendExperimentAnalysisLog(strHeader, strLog, "SneakRequestSlotsFilled", bMatchesRival ? pRequestLog->m_iFilledSlots : -1);
+		AppendExperimentAnalysisLog(strHeader, strLog, "SneakRequestSlotsRequired", bMatchesRival ? pRequestLog->m_iRequiredSlots : -1);
+		AppendExperimentAnalysisLog(strHeader, strLog, "SneakRequestLandReservesUsed", bMatchesRival ? pRequestLog->m_iLandReservesUsed : -1);
+		AppendExperimentAnalysisLog(strHeader, strLog, "SneakRequestLandReservesAvailable", bMatchesRival ? pRequestLog->m_iLandReservesAvailable : -1);
+		AppendExperimentAnalysisLog(strHeader, strLog, "SneakRequestLandRequests", bMatchesRival ? pRequestLog->m_iLandAttacksRequested : -1);
+		AppendExperimentAnalysisLog(strHeader, strLog, "SneakRequestNavalRequests", bMatchesRival ? pRequestLog->m_iNavalAttacksRequested : -1);
+		AppendExperimentAnalysisLog(strHeader, strLog, "SneakRequestArmyType", bMatchesRival ? pRequestLog->m_iArmyTypeBeingBuilt : -1);
+		AppendExperimentAnalysisLog(strHeader, strLog, "SneakRequestTargetX", bMatchesRival ? pRequestLog->m_iTargetX : -1);
+		AppendExperimentAnalysisLog(strHeader, strLog, "SneakRequestTargetY", bMatchesRival ? pRequestLog->m_iTargetY : -1);
+		AppendExperimentAnalysisLog(strHeader, strLog, "SneakRequestMusterX", bMatchesRival ? pRequestLog->m_iMusterX : -1);
+		AppendExperimentAnalysisLog(strHeader, strLog, "SneakRequestMusterY", bMatchesRival ? pRequestLog->m_iMusterY : -1);
+		AppendExperimentAnalysisLog(strHeader, strLog, "SneakRequestPathLength", bMatchesRival ? pRequestLog->m_iPathLength : -1);
+	}
+	//END MOD
 	const char* GetCityFocusTypeName(CityAIFocusTypes eFocusType)
 	{
 		switch(eFocusType)
@@ -1253,7 +1363,7 @@ namespace
 
 		ExperimentProductionCategoryCounts kProductionCounts;
 		CountExperimentProductionCategories(*pPlayer, kProductionCounts);
-		strHeader = "Turn,Player,Primary,AtWarCount,Gold,GPTx100,Happiness,Science,ScienceRank,CulturePT,CulturePTRank,LifetimeCulture,LifetimeCultureRank,Policies,PoliciesRank,Production,ProductionRank,Military,MilitaryRank,NonPuppetCities,Population,CitiesProducingCultureBuilding,CitiesProducingProcess,RivalID,RivalName,Met,AtWar,CanDeclareWar,TurnsLockedIntoWar,Approach,VisibleApproach,WarGoal,WarState,WarProjection,MilitaryThreat,WarmongerThreat,LandDispute,VictoryDispute,Proximity,RivalScore,RivalScience,RivalTechs,RivalCulturePT,RivalLifetimeCulture,RivalPolicies,RivalProduction,RivalMilitary,RivalCities,RivalPopulation,OurMilitaryPctRival,OurScorePctRival";
+		strHeader = "Turn,Player,Primary,AtWarCount,Gold,GPTx100,Happiness,Science,ScienceRank,CulturePT,CulturePTRank,LifetimeCulture,LifetimeCultureRank,Policies,PoliciesRank,Production,ProductionRank,Military,MilitaryRank,NonPuppetCities,Population,CitiesProducingCultureBuilding,CitiesProducingProcess,RivalID,RivalName,Met,AtWar,CanDeclareWar,TurnsLockedIntoWar,Approach,VisibleApproach,WarGoal,WarState,WarProjection,WarPrepMustering,WarPrepOperationSource,WarPrepOperationType,WarPrepOperationState,WarPrepProgressPct,WarPrepArmyID,WarPrepArmyState,WarPrepArmySlotsFilled,WarPrepArmySlotsTotal,WarPrepUnitsNeededToBuild,WarPrepMusterX,WarPrepMusterY,WarPrepTargetX,WarPrepTargetY,WarPrepArmyX,WarPrepArmyY,ArmyBeingBuilt,SneakRequestTurn,SneakRequestResult,SneakRequestOperationType,SneakRequestFormation,SneakRequestAttackReady,SneakRequestAttackBySea,SneakRequestSlotsFilled,SneakRequestSlotsRequired,SneakRequestLandReservesUsed,SneakRequestLandReservesAvailable,SneakRequestLandRequests,SneakRequestNavalRequests,SneakRequestArmyType,SneakRequestTargetX,SneakRequestTargetY,SneakRequestMusterX,SneakRequestMusterY,SneakRequestPathLength,MilitaryThreat,WarmongerThreat,LandDispute,VictoryDispute,Proximity,RivalScore,RivalScience,RivalTechs,RivalCulturePT,RivalLifetimeCulture,RivalPolicies,RivalProduction,RivalMilitary,RivalCities,RivalPopulation,OurMilitaryPctRival,OurScorePctRival";
 
 		CvTeam& kTeam = GET_TEAM(pPlayer->getTeam());
 		CvDiplomacyAI* pDiploAI = pPlayer->GetDiplomacyAI();
@@ -1318,6 +1428,8 @@ namespace
 			AppendExperimentAnalysisLog(strRowHeader, strLog, "WarGoal", (int)pDiploAI->GetWarGoal(eRival));
 			AppendExperimentAnalysisLog(strRowHeader, strLog, "WarState", (int)pDiploAI->GetWarState(eRival));
 			AppendExperimentAnalysisLog(strRowHeader, strLog, "WarProjection", (int)pDiploAI->GetWarProjection(eRival));
+			AppendExperimentWarPrepDiagnostics(strRowHeader, strLog, pPlayer, pDiploAI, eRival);
+			AppendExperimentSneakRequestDiagnostics(strRowHeader, strLog, pPlayer, eRival);
 			AppendExperimentAnalysisLog(strRowHeader, strLog, "MilitaryThreat", (int)pDiploAI->GetMilitaryThreat(eRival));
 			AppendExperimentAnalysisLog(strRowHeader, strLog, "WarmongerThreat", (int)pDiploAI->GetWarmongerThreat(eRival));
 			AppendExperimentAnalysisLog(strRowHeader, strLog, "LandDispute", (int)pDiploAI->GetLandDisputeLevel(eRival));
@@ -2035,7 +2147,11 @@ StrategyDirective CvGrandStrategyAI::BuildStrategyDirective(const GameStateSumma
 	const bool bMajorCityMilitaryThreat = (kSummary.m_bGeneralThreat && bPressureFromNeighbors && (bRelevantMilitaryShortfall || bWorldMilitaryShortfall));
 	const bool bWarMilitaryThreat = kSummary.m_bAtWar && (bMajorCityMilitaryThreat || bRelevantMilitaryShortfall || bWorldMilitaryShortfall);
 	const bool bImmediateMilitaryThreat = bWarMilitaryThreat || bMajorCityMilitaryThreat;
-	const bool bMilitaryOpportunity = !kSummary.m_bAtWar && !bGoldCritical && kSummary.m_iStrongLandDisputeMajorCivs > 0 && bMilitaryAdvantage;
+	//MOD: dominant armies should not wait for land disputes to become strong if diplomacy already sees war pressure.
+	const bool bDominantMilitaryOpportunity = kSummary.m_iMilitaryPercentOfRelevantAverage >= StrategyDirectiveAIConstants::MILITARISTIC_EXPANSION_ATTACK_RELEVANT_PERCENT;
+	const bool bOffensivePressureExists = kSummary.m_iStrongLandDisputeMajorCivs > 0 || kSummary.m_iWarApproachMajorCivs > 0 || kSummary.m_iHostileMajorCivs > 0 || kSummary.m_iMajorMilitaryThreatCivs > 0;
+	const bool bMilitaryOpportunity = !kSummary.m_bAtWar && !bGoldCritical && bOffensivePressureExists && ((kSummary.m_iStrongLandDisputeMajorCivs > 0 && bMilitaryAdvantage) || bDominantMilitaryOpportunity);
+	//END MOD
 	const bool bBarbarianCityThreat = kSummary.m_bBarbarianThreat && kSummary.m_iMostThreatenedCityThreat >= StrategyDirectiveAIConstants::MILITARY_THREAT_MODERATE_CITY_THREAT_VALUE;
 	const bool bMajorCityThreatCanDriveMilitary = (kSummary.m_bAtWar || bPressureFromNeighbors);
 	const bool bModerateMajorCityThreat = bMajorCityThreatCanDriveMilitary && kSummary.m_iMostThreatenedCityThreat >= StrategyDirectiveAIConstants::MILITARY_THREAT_MODERATE_CITY_THREAT_VALUE;

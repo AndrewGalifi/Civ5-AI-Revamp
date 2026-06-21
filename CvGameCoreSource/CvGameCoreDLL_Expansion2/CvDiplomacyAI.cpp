@@ -5407,7 +5407,7 @@ static bool ShouldMilitaristicExpansionPrepareAttack(CvDiplomacyAI* pDiplomacyAI
 		return false;
 	}
 
-	if(kState.m_kSummary.m_iMilitaryPercentOfRelevantAverage < 300)
+	if(kState.m_kSummary.m_iMilitaryPercentOfRelevantAverage < StrategyDirectiveAIConstants::MILITARISTIC_EXPANSION_ATTACK_RELEVANT_PERCENT)
 	{
 		return false;
 	}

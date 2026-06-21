@@ -1,9 +1,9 @@
 /*	-------------------------------------------------------------------------------------------------------
-	© 1991-2012 Take-Two Interactive Software and its subsidiaries.  Developed by Firaxis Games.  
-	Sid Meier's Civilization V, Civ, Civilization, 2K Games, Firaxis Games, Take-Two Interactive Software 
-	and their respective logos are all trademarks of Take-Two interactive Software, Inc.  
-	All other marks and trademarks are the property of their respective owners.  
-	All rights reserved. 
+	© 1991-2012 Take-Two Interactive Software and its subsidiaries.  Developed by Firaxis Games.
+	Sid Meier's Civilization V, Civ, Civilization, 2K Games, Firaxis Games, Take-Two Interactive Software
+	and their respective logos are all trademarks of Take-Two interactive Software, Inc.
+	All other marks and trademarks are the property of their respective owners.
+	All rights reserved.
 	------------------------------------------------------------------------------------------------------- */
 #include "CvGameCoreDLLPCH.h"
 #include "ICvDLLUserInterface.h"
@@ -13,10 +13,14 @@
 #include "CvEconomicAI.h"
 #include "CvMilitaryAI.h"
 #include "CvGrandStrategyAI.h"
+//MOD: internal food trade-unit weighting checks current trade-route availability.
+#include "CvTradeClasses.h"
 #include "CvCitySpecializationAI.h"
 #include "CvEspionageClasses.h"
 #include "Fireworks/FVariableSystem.h"
 #include "CvEnumSerialization.h"
+#include "CvInfosSerializationHelper.h"
+#include "cvStopWatch.h"
 
 // must be included after all other headers
 #include "LintFree.h"
@@ -84,6 +88,7 @@ namespace
 	const int AI_EXPERIMENT_CAPITAL_GRANARY_EARLY_WEIGHT_PENALTY = 2500;
 	const int AI_EXPERIMENT_GRANARY_CAPITAL_WEIGHT_BONUS = 900;
 	const int AI_EXPERIMENT_GRANARY_EXPAND_WEIGHT_BONUS = 2200;
+	const int AI_EXPERIMENT_INTERNAL_FOOD_TRADE_UNIT_WEIGHT_BONUS = 12000;
 	const int AI_EXPERIMENT_RANGED_UNIT_WEIGHT_BONUS = 750;
 	const int AI_EXPERIMENT_BASE_SCIENCE_FLAVOR_BONUS = 6;
 	const int AI_EXPERIMENT_BASE_CULTURE_FLAVOR_BONUS = 3;
@@ -529,6 +534,67 @@ namespace
 
 		return pCity->isCapital() ? AI_EXPERIMENT_GRANARY_CAPITAL_WEIGHT_BONUS : AI_EXPERIMENT_GRANARY_EXPAND_WEIGHT_BONUS;
 	}
+
+	bool HasExperimentInternalFoodRoute(CvPlayerAI& kPlayer, DomainTypes eDomain)
+	{
+		if(!ShouldUseStrategyDirectiveAI(kPlayer.GetID()) || (eDomain != DOMAIN_LAND && eDomain != DOMAIN_SEA) || GC.getGame().getGameTurn() > StrategyDirectiveAIConstants::INTERNAL_FOOD_TRADE_PRIORITY_END_TURN)
+		{
+			return false;
+		}
+
+		if(kPlayer.getNumCities() <= 1 || kPlayer.GetHappiness() < 0 || kPlayer.GetTrade()->GetNumTradeRoutesRemaining(true) <= 0)
+		{
+			return false;
+		}
+
+		int iOriginLoop = 0;
+		for(CvCity* pOriginCity = kPlayer.firstCity(&iOriginLoop); pOriginCity != NULL; pOriginCity = kPlayer.nextCity(&iOriginLoop))
+		{
+			if(pOriginCity->IsPuppet())
+			{
+				continue;
+			}
+
+			int iDestLoop = 0;
+			for(CvCity* pDestCity = kPlayer.firstCity(&iDestLoop); pDestCity != NULL; pDestCity = kPlayer.nextCity(&iDestLoop))
+			{
+				if(pDestCity == pOriginCity || pDestCity->IsPuppet())
+				{
+					continue;
+				}
+
+				//MOD: avoid expensive pathfinding inside production scoring; route execution validates the path later.
+				if(kPlayer.GetTrade()->CanCreateTradeRoute(pOriginCity, pDestCity, eDomain, TRADE_CONNECTION_FOOD, false, false))
+				{
+					return true;
+				}
+			}
+		}
+
+		return false;
+	}
+
+	bool ShouldSuppressExperimentEarlyTradeUnit(CvPlayerAI& kPlayer, CvUnitEntry* pkUnitInfo)
+	{
+		if(pkUnitInfo == NULL || !pkUnitInfo->IsTrade() || !ShouldUseStrategyDirectiveAI(kPlayer.GetID()) || GC.getGame().getGameTurn() > StrategyDirectiveAIConstants::INTERNAL_FOOD_TRADE_PRIORITY_END_TURN)
+		{
+			return false;
+		}
+
+		const DomainTypes eDomain = (DomainTypes)pkUnitInfo->GetDomainType();
+		return !HasExperimentInternalFoodRoute(kPlayer, eDomain);
+	}
+
+	int GetExperimentInternalFoodTradeUnitWeight(CvPlayerAI& kPlayer, CvUnitEntry* pkUnitInfo)
+	{
+		if(pkUnitInfo == NULL || !pkUnitInfo->IsTrade())
+		{
+			return 0;
+		}
+
+		const DomainTypes eDomain = (DomainTypes)pkUnitInfo->GetDomainType();
+		return HasExperimentInternalFoodRoute(kPlayer, eDomain) ? AI_EXPERIMENT_INTERNAL_FOOD_TRADE_UNIT_WEIGHT_BONUS : 0;
+	}
 	int GetExperimentWorkerWeight(CvPlayerAI& kPlayer, CvUnitEntry* pkUnitInfo)
 	{
 		if(pkUnitInfo == NULL || !ShouldUseStrategyDirectiveAI(kPlayer.GetID()))
@@ -699,13 +765,26 @@ namespace
 			return false;
 		}
 
+		//MOD: non-experiment players should keep vanilla settler suppression and skip experiment directive blockers.
+		if(!ShouldUseStrategyDirectiveAI(kPlayer.GetID()))
+		{
+			if(bEnoughSettlers)
+			{
+				return true;
+			}
+
+			int iBestArea, iSecondBestArea;
+			const int iNumGoodAreas = kPlayer.GetBestSettleAreas(kPlayer.GetEconomicAI()->GetMinimumSettleFertility(), iBestArea, iSecondBestArea);
+			return iNumGoodAreas == 0;
+		}
+
 		if(IsExperimentNationalCollegePending(kPlayer))
 		{
 			return true;
 		}
 
 		const StrategyDirective& kDirective = kPlayer.GetGrandStrategyAI()->GetStrategyState().m_kDirective;
-		//MOD: recovery/defense directives should block all vanilla settler selection, not just capital-settler strategy.
+		//MOD: recovery/defense directives should block all experiment settler selection, not just capital-settler strategy.
 		if(!kDirective.m_bAllowCapitalSettlerStrategy || kDirective.m_bLowHappiness)
 		{
 			return true;
@@ -1068,44 +1147,13 @@ void CvCityStrategyAI::Read(FDataStream& kStream)
 
 	CvAssertMsg(m_piLatestFlavorValues != NULL && GC.getNumFlavorTypes() > 0, "Number of flavor values to serialize is expected to greater than 0");
 
-	if(uiVersion >= 3)
-	{
-		int iNumFlavors;
-		kStream >> iNumFlavors;
-		ArrayWrapper<int> wrapLatestFlavor(iNumFlavors, m_piLatestFlavorValues);
-		kStream >> wrapLatestFlavor;
-	}
-	else
-	{
-		const int iNumFlavorsVersion2 = 27;
-		ArrayWrapper<int> wrapLatestFlavor(iNumFlavorsVersion2, m_piLatestFlavorValues);
-		kStream >> wrapLatestFlavor;
-	}
+	int iNumFlavors;
+	kStream >> iNumFlavors;
+	ArrayWrapper<int> wrapLatestFlavor(iNumFlavors, m_piLatestFlavorValues);
+	kStream >> wrapLatestFlavor;
 
-	if(uiVersion >= 2)
-	{
-		int iNumStrategies;
-		kStream >> iNumStrategies;
-		ArrayWrapper<bool> wrapUsingCity(iNumStrategies, m_pabUsingCityStrategy);
-		kStream >> wrapUsingCity;
-		ArrayWrapper<int> wrapTurnCity(iNumStrategies, m_paiTurnCityStrategyAdopted);
-		kStream >> wrapTurnCity;
-	}
-
-	else
-	{
-		const int iNumCityStrategiesVersion1 = 17;
-		ArrayWrapper<bool> wrapUsingCity(iNumCityStrategiesVersion1, m_pabUsingCityStrategy);
-		kStream >> wrapUsingCity;
-		ArrayWrapper<int> wrapTurnCity(iNumCityStrategiesVersion1, m_paiTurnCityStrategyAdopted);
-		kStream >> wrapTurnCity;
-
-		for(int iI = iNumCityStrategiesVersion1; iI < m_pAICityStrategies->GetNumAICityStrategies(); iI++)
-		{
-			m_pabUsingCityStrategy[iI] = false;
-			m_paiTurnCityStrategyAdopted[iI] = -1;
-		}
-	}
+	CvInfosSerializationHelper::ReadHashedDataArray(kStream, m_pabUsingCityStrategy, GC.getNumAICityStrategyInfos());
+	CvInfosSerializationHelper::ReadHashedDataArray(kStream, m_paiTurnCityStrategyAdopted, GC.getNumAICityStrategyInfos());
 
 	kStream >> m_eSpecialization;
 	kStream >> m_eDefaultSpecialization;
@@ -1114,17 +1162,14 @@ void CvCityStrategyAI::Read(FDataStream& kStream)
 	m_pBuildingProductionAI->Read(kStream);
 	m_pUnitProductionAI->Read(kStream);
 	m_pProjectProductionAI->Read(kStream);
-	if (uiVersion >= 4)
-	{
-		m_pProcessProductionAI->Read(kStream);
-	}
+	m_pProcessProductionAI->Read(kStream);
 }
 
 /// Serialization write
 void CvCityStrategyAI::Write(FDataStream& kStream)
 {
 	// Current version number
-	uint uiVersion = 4;
+	uint uiVersion = 1;
 	kStream << uiVersion;
 
 	CvAssertMsg(GC.getNumFlavorTypes() > 0, "Number of flavor values to serialize is expected to greater than 0");
@@ -1133,10 +1178,9 @@ void CvCityStrategyAI::Write(FDataStream& kStream)
 	kStream << ArrayWrapper<int>(iNumFlavors, m_piLatestFlavorValues);
 
 	int iNumStrategies = GC.getNumAICityStrategyInfos();
-	CvAssertMsg(iNumStrategies > 0, "Number of AICityStrategies to serialize is expected to greater than 0");
-	kStream << iNumStrategies;
-	kStream << ArrayWrapper<bool>(iNumStrategies, m_pabUsingCityStrategy);
-	kStream << ArrayWrapper<int>(iNumStrategies, m_paiTurnCityStrategyAdopted);
+
+	CvInfosSerializationHelper::WriteHashedDataArray<AICityStrategyTypes, bool>(kStream, m_pabUsingCityStrategy, iNumStrategies);
+	CvInfosSerializationHelper::WriteHashedDataArray<AICityStrategyTypes, int>(kStream, m_paiTurnCityStrategyAdopted, iNumStrategies);
 
 	kStream << m_eSpecialization;
 	kStream << m_eDefaultSpecialization;
@@ -1146,7 +1190,6 @@ void CvCityStrategyAI::Write(FDataStream& kStream)
 	m_pProjectProductionAI->Write(kStream);
 	m_pProcessProductionAI->Write(kStream);
 }
-
 /// Respond to a new set of flavor values
 void CvCityStrategyAI::FlavorUpdate()
 {
@@ -1737,10 +1780,17 @@ void CvCityStrategyAI::ChooseProduction(bool bUseAsyncRandom, BuildingTypes eIgn
 				iTempWeight += GetExperimentWorkerWeight(kPlayer, pkUnitEntry);
 				//MOD: prioritize work boats for owned workable water resources, especially luxuries
 				iTempWeight += GetExperimentWorkBoatWeight(GetCity(), kPlayer, pkUnitEntry);
+				//MOD: nudge early trade units only after a valid internal food route exists.
+				iTempWeight += GetExperimentInternalFoodTradeUnitWeight(kPlayer, pkUnitEntry);
 				//MOD: push settlers harder during expansion posture
 				iTempWeight += GetExperimentExpansionSettlerWeight(kPlayer, pkUnitEntry);
 				//MOD: modestly prefer ranged units when the military mix is melee-heavy
 				iTempWeight += GetExperimentRangedUnitWeight(kPlayer, pkUnitEntry);
+				//MOD: suppress early trade units until they can serve an internal food route.
+				if(ShouldSuppressExperimentEarlyTradeUnit(kPlayer, pkUnitEntry))
+				{
+					iTempWeight = 0;
+				}
 				//MOD: suppress normal settler builds when NC, area, or vanilla caps block expansion
 				if(ShouldSuppressExperimentSettlerBuild(kPlayer, pkUnitEntry, bEnoughSettlers))
 				{
@@ -1793,6 +1843,12 @@ void CvCityStrategyAI::ChooseProduction(bool bUseAsyncRandom, BuildingTypes eIgn
 			}
 		}
 
+	}
+
+	// Normally, a puppeted city cannot run processes, but as Venice they are allowed to.
+	bool bIsVenice = kPlayer.GetPlayerTraits()->IsNoAnnexing();
+	if (!GetCity()->IsPuppet() || bIsVenice)
+	{
 		// Loop through adding available processes
 		if (!GET_PLAYER(m_pCity->getOwner()).isMinorCiv())
 		{
@@ -1819,8 +1875,6 @@ void CvCityStrategyAI::ChooseProduction(bool bUseAsyncRandom, BuildingTypes eIgn
 			}
 		}
 	}
-
-
 	ReweightByCost();
 
 	m_Buildables.SortItems();
@@ -1893,6 +1947,7 @@ void CvCityStrategyAI::ChooseProduction(bool bUseAsyncRandom, BuildingTypes eIgn
 /// Called every turn to see what CityStrategies this City should using (or not)
 void CvCityStrategyAI::DoTurn()
 {
+	AI_PERF_FORMAT("City-AI-perf.csv", ("CvCityStrategyAI::DoTurn, Turn %03d, %s, %s", GC.getGame().getElapsedGameTurns(), m_pCity->GetPlayer()->getCivilizationShortDescription(), m_pCity->getName().c_str()) );
 	int iCityStrategiesLoop = 0;
 
 	// Loop through all CityStrategies
@@ -2046,6 +2101,46 @@ void CvCityStrategyAI::DoTurn()
 					bStrategyShouldBeActive = CityStrategyAIHelpers::IsTestCityStrategy_KeyScienceCity(GetCity());
 				else if(strStrategyName == "AICITYSTRATEGY_GOOD_GP_CITY")
 					bStrategyShouldBeActive = CityStrategyAIHelpers::IsTestCityStrategy_GoodGPCity(GetCity());
+				else if(strStrategyName == "AICITYSTRATEGY_NEED_INTERNATIONAL_LAND_TRADE_ROUTE")
+					bStrategyShouldBeActive = CityStrategyAIHelpers::IsTestCityStrategy_NeedInternationalTradeRoute(GetCity(), DOMAIN_LAND);
+				else if(strStrategyName == "AICITYSTRATEGY_NO_NEED_INTERNATIONAL_LAND_TRADE_ROUTE")
+					bStrategyShouldBeActive = CityStrategyAIHelpers::IsTestCityStrategy_NoNeedInternationalTradeRoute(GetCity(), DOMAIN_LAND);
+				else if(strStrategyName == "AICITYSTRATEGY_NEED_INTERNATIONAL_SEA_TRADE_ROUTE")
+					bStrategyShouldBeActive = CityStrategyAIHelpers::IsTestCityStrategy_NeedInternationalTradeRoute(GetCity(), DOMAIN_SEA);
+				else if(strStrategyName == "AICITYSTRATEGY_NO_NEED_INTERNATIONAL_SEA_TRADE_ROUTE")
+					bStrategyShouldBeActive = CityStrategyAIHelpers::IsTestCityStrategy_NoNeedInternationalTradeRoute(GetCity(), DOMAIN_SEA);
+				else if(strStrategyName == "AICITYSTRATEGY_INTERNATIONAL_TRADE_DESTINATION")
+					bStrategyShouldBeActive = CityStrategyAIHelpers::IsTestCityStrategy_IsInternationalTradeDestination(GetCity());
+				else if(strStrategyName == "AICITYSTRATEGY_INTERNATIONAL_TRADE_ORIGIN")
+					bStrategyShouldBeActive = CityStrategyAIHelpers::IsTestCityStrategy_IsInternationalTradeOrigin(GetCity());
+				else if(strStrategyName == "AICITYSTRATEGY_NEED_CULTURE_BUILDING")
+					bStrategyShouldBeActive = CityStrategyAIHelpers::IsTestCityStrategy_NeedCultureBuilding(GetCity());
+				else if(strStrategyName == "AICITYSTRATEGY_NEED_TOURISM_BUILDING")
+					bStrategyShouldBeActive = CityStrategyAIHelpers::IsTestCityStrategy_NeedTourismBuilding(GetCity());
+				else if(strStrategyName == "AICITYSTRATEGY_GOOD_AIRLIFT_CITY")
+					bStrategyShouldBeActive = CityStrategyAIHelpers::IsTestCityStrategy_GoodAirliftCity(GetCity());
+
+				// Check Lua hook
+				ICvEngineScriptSystem1* pkScriptSystem = gDLL->GetScriptSystem();
+				if(pkScriptSystem && bStrategyShouldBeActive)
+				{
+					CvLuaArgsHandle args;
+					args->Push(iCityStrategiesLoop);
+					args->Push(GetCity()->getOwner());
+					args->Push(GetCity()->GetID());
+
+					// Attempt to execute the game events.
+					// Will return false if there are no registered listeners.
+					bool bResult = false;
+					if(LuaSupport::CallTestAll(pkScriptSystem, "CityStrategyCanActivate", args.get(), bResult))
+					{
+						// Check the result.
+						if(bResult == false)
+						{
+							bStrategyShouldBeActive = false;
+						}
+					}
+				}
 			}
 
 			// This variable keeps track of whether or not we should be doing something (i.e. Strategy is active now but should be turned off, OR Strategy is inactive and should be enabled)
@@ -2790,6 +2885,12 @@ bool CityStrategyAIHelpers::IsTestCityStrategy_SmallCity(CvCity* pCity)
 /// "Medium City" City Strategy: If a City is 8 or above Population boost science
 bool CityStrategyAIHelpers::IsTestCityStrategy_MediumCity(CvCity* pCity)
 {
+	// Never consider the capital to be a medium city (so with late game starts at least one city retains high flavors for SPACESHIP, etc.)
+	if (pCity->isCapital())
+	{
+		return false;
+	}
+
 	// City Population is getting larger, increase science
 	if(pCity->getPopulation() >= GC.getAI_CITYSTRATEGY_MEDIUM_CITY_POP_THRESHOLD() &&   // 5 to 11
 	        pCity->getPopulation() < GC.getAI_CITYSTRATEGY_LARGE_CITY_POP_THRESHOLD())
@@ -3124,7 +3225,7 @@ bool CityStrategyAIHelpers::IsTestCityStrategy_NeedNavalGrowth(AICityStrategyTyp
 
 					if(pLoopPlot->isWater() && !pLoopPlot->isLake())
 					{
-						iNumOceanPlots++;
+						iNumOceanPlots++;;
 					}
 				}
 			}
@@ -3614,7 +3715,7 @@ bool CityStrategyAIHelpers::IsTestCityStrategy_ManyTechsStolen(CvCity* pCity)
 			}
 		}
 		CvAssertMsg(eFlavorEspionage != NO_FLAVOR, "Could not find espionage flavor!");
-		
+
 		fRatio = pCityEspionage->m_aiNumTimesCityRobbed[ePlayer] / (float)(iTurnsOfEspionage);
 	}
 
@@ -3726,6 +3827,27 @@ bool CityStrategyAIHelpers::IsTestCityStrategy_GoodGPCity(CvCity* pCity)
 					if ((UnitClassTypes)pkSpecialistInfo->getGreatPeopleUnitClass() == GC.getInfoTypeForString("UNITCLASS_SCIENTIST"))
 					{
 						iMod += pCity->GetPlayer()->GetPlayerTraits()->GetGreatScientistRateModifier();
+						iMod += pCity->GetPlayer()->getGreatScientistRateModifier();
+					}
+					else if((UnitClassTypes)pkSpecialistInfo->getGreatPeopleUnitClass() == GC.getInfoTypeForString("UNITCLASS_WRITER"))
+					{
+						iMod += pCity->GetPlayer()->getGreatWriterRateModifier();
+					}
+					else if((UnitClassTypes)pkSpecialistInfo->getGreatPeopleUnitClass() == GC.getInfoTypeForString("UNITCLASS_ARTIST"))
+					{
+						iMod += pCity->GetPlayer()->getGreatArtistRateModifier();
+					}
+					else if((UnitClassTypes)pkSpecialistInfo->getGreatPeopleUnitClass() == GC.getInfoTypeForString("UNITCLASS_MUSICIAN"))
+					{
+						iMod += pCity->GetPlayer()->getGreatMusicianRateModifier();
+					}
+					else if((UnitClassTypes)pkSpecialistInfo->getGreatPeopleUnitClass() == GC.getInfoTypeForString("UNITCLASS_MERCHANT"))
+					{
+						iMod += pCity->GetPlayer()->getGreatMerchantRateModifier();
+					}
+					else if((UnitClassTypes)pkSpecialistInfo->getGreatPeopleUnitClass() == GC.getInfoTypeForString("UNITCLASS_ENGINEER"))
+					{
+						iMod += pCity->GetPlayer()->getGreatEngineerRateModifier();
 					}
 
 					iGPPChange *= (100 + iMod);
@@ -3738,6 +3860,124 @@ bool CityStrategyAIHelpers::IsTestCityStrategy_GoodGPCity(CvCity* pCity)
 	}
 
 	if (iTotalGPPChange >= 800)
+	{
+		return true;
+	}
+
+	return false;
+}
+bool CityStrategyAIHelpers::IsTestCityStrategy_NeedInternationalTradeRoute (CvCity* pCity, DomainTypes eDomain)
+{
+	PlayerTypes ePlayer = pCity->getOwner();
+	CvPlayerTrade* pTrade = GET_PLAYER(ePlayer).GetTrade();
+
+	if (pTrade->GetNumTradeRoutesRemaining(false) <= 0)
+	{
+		return false;
+	}
+
+	if (pTrade->GetNumPotentialConnections(pCity, eDomain) <= 0)
+	{
+		return false;
+	}
+
+	return true;
+}
+
+bool CityStrategyAIHelpers::IsTestCityStrategy_NoNeedInternationalTradeRoute (CvCity* pCity, DomainTypes eDomain)
+{
+	PlayerTypes ePlayer = pCity->getOwner();
+	CvPlayerTrade* pTrade = GET_PLAYER(ePlayer).GetTrade();
+
+	if (pTrade->GetNumTradeRoutesRemaining(false) <= 0)
+	{
+		return true;
+	}
+
+	if (pTrade->GetNumPotentialConnections(pCity, eDomain) <= 0)
+	{
+		return true;
+	}
+
+	return false;
+}
+
+bool CityStrategyAIHelpers::IsTestCityStrategy_IsInternationalTradeDestination(CvCity* pCity)
+{
+	int iNumTimesDestination = GC.getGame().GetGameTrade()->GetNumTimesDestinationCity(pCity, true);
+	if (iNumTimesDestination >= 2)
+	{
+		return true;
+	}
+	else
+	{
+		return false;
+	}
+}
+
+bool CityStrategyAIHelpers::IsTestCityStrategy_IsInternationalTradeOrigin(CvCity* pCity)
+{
+	int iNumTimesOrigin = GC.getGame().GetGameTrade()->GetNumTimesOriginCity(pCity, true);
+	if (iNumTimesOrigin >= 2)
+	{
+		return true;
+	}
+	else
+	{
+		return false;
+	}
+}
+
+bool CityStrategyAIHelpers::IsTestCityStrategy_NeedCultureBuilding(CvCity *pCity)
+{
+	CvPlayer &kPlayer = GET_PLAYER(pCity->getOwner());
+
+	GreatWorkSlotType eSlotType = pCity->GetCityCulture()->GetSlotTypeFirstAvailableCultureBuilding();
+
+	if (eSlotType != NO_GREAT_WORK_SLOT)
+	{
+		int iSlotsOpen = kPlayer.GetCulture()->GetNumGreatWorkSlots(eSlotType);
+
+		if (iSlotsOpen <= 2)
+		{
+			return true;
+		}
+	}
+
+	return false;
+}
+
+bool CityStrategyAIHelpers::IsTestCityStrategy_NeedTourismBuilding(CvCity *pCity)
+{
+	int iTourismValue = 0;
+	iTourismValue += pCity->GetCityCulture()->GetCultureFromWonders();
+	iTourismValue += pCity->GetCityCulture()->GetCultureFromNaturalWonders();
+	iTourismValue += pCity->GetCityCulture()->GetCultureFromImprovements();
+	iTourismValue += pCity->GetCityCulture()->GetBaseTourism();
+
+	if (iTourismValue > 10)
+	{
+		return true;
+	}
+
+	return false;
+}
+
+bool CityStrategyAIHelpers::IsTestCityStrategy_GoodAirliftCity(CvCity *pCity)
+{
+	if (pCity->isCapital())
+	{
+		return true;
+	}
+
+	CvPlayer &kPlayer = GET_PLAYER(pCity->getOwner());
+	CvCity *pCapital = kPlayer.getCapitalCity();
+	if (pCity && pCity->getArea() != pCapital->getArea())
+	{
+		return true;
+	}
+
+	if (plotDistance (pCity->getX(), pCity->getY(), pCapital->getX(), pCapital->getY()) > 20)
 	{
 		return true;
 	}

@@ -26,6 +26,33 @@ enum ArmyType
     ARMY_TYPE_NAVAL_INVASION,
 };
 
+//MOD: lightweight diagnostics for failed or delayed sneak-attack requests.
+struct CvMilitarySneakAttackRequestLog
+{
+	CvMilitarySneakAttackRequestLog();
+	void Reset();
+
+	int m_iTurn;
+	int m_iTargetPlayer;
+	int m_iResult;
+	int m_iOperationType;
+	int m_iFormation;
+	int m_iAttackReady;
+	int m_iAttackBySea;
+	int m_iFilledSlots;
+	int m_iRequiredSlots;
+	int m_iLandReservesUsed;
+	int m_iLandReservesAvailable;
+	int m_iLandAttacksRequested;
+	int m_iNavalAttacksRequested;
+	int m_iArmyTypeBeingBuilt;
+	int m_iTargetX;
+	int m_iTargetY;
+	int m_iMusterX;
+	int m_iMusterY;
+	int m_iPathLength;
+};
+
 //++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 //  CLASS:      CvMilitaryAIStrategyXMLEntry
 //!  \brief		A single entry in the AI strategy XML file
@@ -254,6 +281,10 @@ public:
 	{
 		return m_eArmyTypeBeingBuilt;
 	};
+	const CvMilitarySneakAttackRequestLog& GetLastSneakAttackRequestLog() const
+	{
+		return m_kLastSneakAttackRequestLog;
+	}
 	UnitTypes GetUnitForArmy(CvCity* pCity) const;
 	bool WillAirUnitRebase(CvUnit* pUnit) const;
 	int GetNumEnemyAirUnitsInRange(CvPlot* pCenterPlot, int iRange, bool bCountFighters, bool bCountBombers) const;
@@ -345,6 +376,7 @@ private:
 	int m_iMandatoryReserveSize;
 	int m_iNumLandAttacksRequested;
 	int m_iNumNavalAttacksRequested;
+	CvMilitarySneakAttackRequestLog m_kLastSneakAttackRequestLog;
 	DefenseState m_eLandDefenseState;
 	DefenseState m_eNavalDefenseState;
 };
