@@ -248,6 +248,41 @@ _Ret_maybenull_ CvMilitaryAIStrategyXMLEntry* CvMilitaryAIStrategyXMLEntries::Ge
 // CvMilitaryAI
 //=====================================
 
+const int AI_EXPERIMENT_SNEAK_REQUEST_BLOCKED_NAVAL_OPERATION = 1;
+const int AI_EXPERIMENT_SNEAK_REQUEST_BLOCKED_LAND_OPERATION = 2;
+const int AI_EXPERIMENT_SNEAK_REQUEST_NO_TARGET = 3;
+const int AI_EXPERIMENT_SNEAK_REQUEST_NOT_ATTACK_READY = 4;
+const int AI_EXPERIMENT_SNEAK_REQUEST_OPERATION_STARTED = 5;
+const int AI_EXPERIMENT_SNEAK_REQUEST_OPERATION_ABORTED = 6;
+
+CvMilitarySneakAttackRequestLog::CvMilitarySneakAttackRequestLog()
+{
+	Reset();
+}
+
+void CvMilitarySneakAttackRequestLog::Reset()
+{
+	m_iTurn = -1;
+	m_iTargetPlayer = -1;
+	m_iResult = -1;
+	m_iOperationType = -1;
+	m_iFormation = -1;
+	m_iAttackReady = -1;
+	m_iAttackBySea = -1;
+	m_iFilledSlots = -1;
+	m_iRequiredSlots = -1;
+	m_iLandReservesUsed = -1;
+	m_iLandReservesAvailable = -1;
+	m_iLandAttacksRequested = -1;
+	m_iNavalAttacksRequested = -1;
+	m_iArmyTypeBeingBuilt = -1;
+	m_iTargetX = -1;
+	m_iTargetY = -1;
+	m_iMusterX = -1;
+	m_iMusterY = -1;
+	m_iPathLength = -1;
+}
+
 /// Constructor
 CvMilitaryAI::CvMilitaryAI():
 	m_pabUsingStrategy(NULL),
@@ -321,6 +356,7 @@ void CvMilitaryAI::Reset()
 
 	m_iTotalThreatWeight = 1;  // Don't ever assume there is no threat at all
 	m_eArmyTypeBeingBuilt = NO_ARMY_TYPE;
+	m_kLastSneakAttackRequestLog.Reset();
 
 	m_iNumLandUnits = 0;
 	m_iNumRangedLandUnits = 0;
@@ -503,55 +539,91 @@ bool CvMilitaryAI::RequestSneakAttack(PlayerTypes eEnemy)
 	CvAIOperation* pOperation = 0;
 	int iOperationID;
 
+	//MOD: capture why a militaristic-expansion war prep did or did not become an operation.
+	m_kLastSneakAttackRequestLog.Reset();
+	m_kLastSneakAttackRequestLog.m_iTurn = GC.getGame().getGameTurn();
+	m_kLastSneakAttackRequestLog.m_iTargetPlayer = eEnemy;
+	m_kLastSneakAttackRequestLog.m_iLandAttacksRequested = m_iNumLandAttacksRequested;
+	m_kLastSneakAttackRequestLog.m_iNavalAttacksRequested = m_iNumNavalAttacksRequested;
+	m_kLastSneakAttackRequestLog.m_iArmyTypeBeingBuilt = m_eArmyTypeBeingBuilt;
+	m_kLastSneakAttackRequestLog.m_iLandReservesAvailable = GetLandReservesAvailable();
+	//END MOD
+
 	// Let's only allow us to be sneak attacking one opponent at a time, so abort if already have one of these operations active against any opponent
 	if (m_pPlayer->haveAIOperationOfType(AI_OPERATION_NAVAL_SNEAK_ATTACK, &iOperationID))
 	{
+		m_kLastSneakAttackRequestLog.m_iResult = AI_EXPERIMENT_SNEAK_REQUEST_BLOCKED_NAVAL_OPERATION;
 		return false;
 	}
 	if (m_pPlayer->haveAIOperationOfType(AI_OPERATION_SNEAK_CITY_ATTACK, &iOperationID))
 	{
+		m_kLastSneakAttackRequestLog.m_iResult = AI_EXPERIMENT_SNEAK_REQUEST_BLOCKED_LAND_OPERATION;
 		return false;
 	}
 
 	target = FindBestAttackTarget(AI_OPERATION_SNEAK_CITY_ATTACK, eEnemy);
 	if(target.m_pTargetCity)
 	{
-		if(target.m_bAttackBySea)
+		const bool bAttackBySea = target.m_bAttackBySea;
+		const MultiunitFormationTypes eFormation = bAttackBySea ? MUFORMATION_NAVAL_INVASION : ((GC.getGame().getHandicapInfo().GetID() > 4 && !(GC.getMap().GetAIMapHint() & 1)) ? MUFORMATION_BIGGER_CITY_ATTACK_FORCE : MUFORMATION_BASIC_CITY_ATTACK_FORCE);
+		const AIOperationTypes eOperationType = bAttackBySea ? AI_OPERATION_NAVAL_SNEAK_ATTACK : AI_OPERATION_SNEAK_CITY_ATTACK;
+		int iNumRequiredSlots = 0;
+		int iLandReservesUsed = 0;
+		const int iFilledSlots = MilitaryAIHelpers::NumberOfFillableSlots(m_pPlayer, eFormation, bAttackBySea, &iNumRequiredSlots, &iLandReservesUsed);
+		const bool bAttackReady = IsAttackReady(eFormation, eOperationType);
+
+		m_kLastSneakAttackRequestLog.m_iOperationType = eOperationType;
+		m_kLastSneakAttackRequestLog.m_iFormation = eFormation;
+		m_kLastSneakAttackRequestLog.m_iAttackReady = bAttackReady ? 1 : 0;
+		m_kLastSneakAttackRequestLog.m_iAttackBySea = bAttackBySea ? 1 : 0;
+		m_kLastSneakAttackRequestLog.m_iFilledSlots = iFilledSlots;
+		m_kLastSneakAttackRequestLog.m_iRequiredSlots = iNumRequiredSlots;
+		m_kLastSneakAttackRequestLog.m_iLandReservesUsed = iLandReservesUsed;
+		m_kLastSneakAttackRequestLog.m_iTargetX = target.m_pTargetCity->getX();
+		m_kLastSneakAttackRequestLog.m_iTargetY = target.m_pTargetCity->getY();
+		m_kLastSneakAttackRequestLog.m_iPathLength = target.m_iPathLength;
+		if(target.m_pMusterCity != NULL)
 		{
-			if(IsAttackReady(MUFORMATION_NAVAL_INVASION, AI_OPERATION_NAVAL_SNEAK_ATTACK))
+			m_kLastSneakAttackRequestLog.m_iMusterX = target.m_pMusterCity->getX();
+			m_kLastSneakAttackRequestLog.m_iMusterY = target.m_pMusterCity->getY();
+		}
+
+		if(bAttackReady)
+		{
+			pOperation = m_pPlayer->addAIOperation(eOperationType, eEnemy, target.m_pTargetCity->getArea(), target.m_pTargetCity, target.m_pMusterCity);
+			if(pOperation != NULL && !pOperation->ShouldAbort())
 			{
-				pOperation = m_pPlayer->addAIOperation(AI_OPERATION_NAVAL_SNEAK_ATTACK, eEnemy, target.m_pTargetCity->getArea(), target.m_pTargetCity, target.m_pMusterCity);
-				if(pOperation != NULL && !pOperation->ShouldAbort())
-				{
-					return true;
-				}
+				m_kLastSneakAttackRequestLog.m_iResult = AI_EXPERIMENT_SNEAK_REQUEST_OPERATION_STARTED;
+				m_kLastSneakAttackRequestLog.m_iArmyTypeBeingBuilt = m_eArmyTypeBeingBuilt;
+				return true;
 			}
-			else
-			{
-				m_iNumNavalAttacksRequested++;
-				m_eArmyTypeBeingBuilt = (m_iNumLandAttacksRequested > m_iNumNavalAttacksRequested) ? ARMY_TYPE_LAND : ARMY_TYPE_NAVAL_INVASION;
-			}
+
+			m_kLastSneakAttackRequestLog.m_iResult = AI_EXPERIMENT_SNEAK_REQUEST_OPERATION_ABORTED;
+			return false;
 		}
 		else
 		{
-			if(IsAttackReady((GC.getGame().getHandicapInfo().GetID() > 4 && !(GC.getMap().GetAIMapHint() & 1)) ? MUFORMATION_BIGGER_CITY_ATTACK_FORCE : MUFORMATION_BASIC_CITY_ATTACK_FORCE, AI_OPERATION_SNEAK_CITY_ATTACK))
+			if(bAttackBySea)
 			{
-				pOperation = m_pPlayer->addAIOperation(AI_OPERATION_SNEAK_CITY_ATTACK, eEnemy, target.m_pTargetCity->getArea(), target.m_pTargetCity, target.m_pMusterCity);
-				if(pOperation != NULL && !pOperation->ShouldAbort())
-				{
-					return true;
-				}
+				m_iNumNavalAttacksRequested++;
 			}
 			else
 			{
 				m_iNumLandAttacksRequested++;
-				m_eArmyTypeBeingBuilt = (m_iNumLandAttacksRequested > m_iNumNavalAttacksRequested) ? ARMY_TYPE_LAND : ARMY_TYPE_NAVAL_INVASION;
 			}
+			m_eArmyTypeBeingBuilt = (m_iNumLandAttacksRequested > m_iNumNavalAttacksRequested) ? ARMY_TYPE_LAND : ARMY_TYPE_NAVAL_INVASION;
+			m_kLastSneakAttackRequestLog.m_iResult = AI_EXPERIMENT_SNEAK_REQUEST_NOT_ATTACK_READY;
+			m_kLastSneakAttackRequestLog.m_iLandAttacksRequested = m_iNumLandAttacksRequested;
+			m_kLastSneakAttackRequestLog.m_iNavalAttacksRequested = m_iNumNavalAttacksRequested;
+			m_kLastSneakAttackRequestLog.m_iArmyTypeBeingBuilt = m_eArmyTypeBeingBuilt;
 		}
+	}
+	else
+	{
+		m_kLastSneakAttackRequestLog.m_iResult = AI_EXPERIMENT_SNEAK_REQUEST_NO_TARGET;
 	}
 	return false;
 }
-
 /// Send an army to force concessions
 bool CvMilitaryAI::RequestShowOfForce(PlayerTypes eEnemy)
 {

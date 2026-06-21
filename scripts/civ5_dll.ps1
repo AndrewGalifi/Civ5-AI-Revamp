@@ -144,13 +144,12 @@ if (-not (Test-Path -LiteralPath $GameDll)) {
 
 $runningCiv = Get-Process | Where-Object {
     $_.ProcessName -like "CivilizationV*" -or
-    $_.ProcessName -like "Launcher*" -or
-    $_.ProcessName -like "FireTuner*"
+    $_.ProcessName -like "Launcher*"
 }
 
 if ($runningCiv) {
     $names = ($runningCiv | Select-Object -ExpandProperty ProcessName -Unique) -join ", "
-    throw "Close Civ V / FireTuner first. Running process(es): $names"
+    throw "Close Civ V / launcher first. Running process(es): $names"
 }
 
 Copy-Item -LiteralPath $SourceDll -Destination $GameDll -Force

@@ -16,68 +16,75 @@
 //MOD: experiment social-policy preference nudges.
 namespace
 {
-	const int AI_EXPERIMENT_TRADITION_BRANCH_WEIGHT_BONUS = 900;
-	const int AI_EXPERIMENT_TRADITION_POLICY_WEIGHT_BONUS = 300;
-	const int AI_EXPERIMENT_RATIONALISM_BRANCH_WEIGHT_BONUS = 1500;
-	const int AI_EXPERIMENT_RATIONALISM_POLICY_WEIGHT_BONUS = 500;
-
-	PolicyBranchTypes GetExperimentTraditionBranch()
+	struct PolicyPreference
 	{
-		return (PolicyBranchTypes)GC.getInfoTypeForString("POLICY_BRANCH_TRADITION", true);
-	}
+		const char* m_szBranchType;
+		int m_iBranchBonus;
+		int m_iPolicyBonus;
+	};
 
-	PolicyBranchTypes GetExperimentRationalismBranch()
+	const PolicyPreference g_akExperimentPolicyPreferences[] =
 	{
-		return (PolicyBranchTypes)GC.getInfoTypeForString("POLICY_BRANCH_RATIONALISM", true);
-	}
+		{"POLICY_BRANCH_TRADITION", 900, 300},
+		{"POLICY_BRANCH_RATIONALISM", 1500, 500}
+	};
+
+	//MOD: ideology crisis thresholds for switching before sustained revolt pressure costs cities.
+	const int AI_EXPERIMENT_IDEOLOGY_CRISIS_HAPPINESS_THRESHOLD = -6;
+	const int AI_EXPERIMENT_IDEOLOGY_CRISIS_TURNS = 10;
+	const int AI_EXPERIMENT_IDEOLOGY_REVOLT_CRISIS_TURNS = 1;
 
 	bool IsExperimentPolicyPlayer(CvPlayer* pPlayer)
 	{
 		return pPlayer != NULL && !pPlayer->isMinorCiv() && ShouldUseStrategyDirectiveAI(pPlayer->GetID());
 	}
 
-	int GetExperimentTraditionBranchWeight(CvPlayer* pPlayer, PolicyBranchTypes eBranch)
+	PolicyBranchTypes GetPolicyPreferenceBranch(const PolicyPreference& kPreference)
 	{
-		const PolicyBranchTypes eTraditionBranch = GetExperimentTraditionBranch();
-		if(!IsExperimentPolicyPlayer(pPlayer) || eTraditionBranch == NO_POLICY_BRANCH_TYPE || eBranch != eTraditionBranch)
-		{
-			return 0;
-		}
-
-		return AI_EXPERIMENT_TRADITION_BRANCH_WEIGHT_BONUS;
+		return (PolicyBranchTypes)GC.getInfoTypeForString(kPreference.m_szBranchType, true);
 	}
 
-	int GetExperimentTraditionPolicyWeight(CvPlayer* pPlayer, CvPolicyEntry* pkPolicyInfo)
+	int GetExperimentPolicyBranchWeight(CvPlayer* pPlayer, PolicyBranchTypes eBranch)
 	{
-		const PolicyBranchTypes eTraditionBranch = GetExperimentTraditionBranch();
-		if(!IsExperimentPolicyPlayer(pPlayer) || pkPolicyInfo == NULL || eTraditionBranch == NO_POLICY_BRANCH_TYPE || pkPolicyInfo->GetPolicyBranchType() != eTraditionBranch)
+		if(!IsExperimentPolicyPlayer(pPlayer))
 		{
 			return 0;
 		}
 
-		return AI_EXPERIMENT_TRADITION_POLICY_WEIGHT_BONUS;
+		int iWeight = 0;
+		for(int iI = 0; iI < ARRAYSIZE(g_akExperimentPolicyPreferences); iI++)
+		{
+			const PolicyPreference& kPreference = g_akExperimentPolicyPreferences[iI];
+			const PolicyBranchTypes ePreferenceBranch = GetPolicyPreferenceBranch(kPreference);
+			if(ePreferenceBranch != NO_POLICY_BRANCH_TYPE && eBranch == ePreferenceBranch)
+			{
+				iWeight += kPreference.m_iBranchBonus;
+			}
+		}
+
+		return iWeight;
 	}
 
-	int GetExperimentRationalismBranchWeight(CvPlayer* pPlayer, PolicyBranchTypes eBranch)
+	int GetExperimentPolicyWeight(CvPlayer* pPlayer, CvPolicyEntry* pkPolicyInfo)
 	{
-		const PolicyBranchTypes eRationalismBranch = GetExperimentRationalismBranch();
-		if(!IsExperimentPolicyPlayer(pPlayer) || eRationalismBranch == NO_POLICY_BRANCH_TYPE || eBranch != eRationalismBranch)
+		if(!IsExperimentPolicyPlayer(pPlayer) || pkPolicyInfo == NULL)
 		{
 			return 0;
 		}
 
-		return AI_EXPERIMENT_RATIONALISM_BRANCH_WEIGHT_BONUS;
-	}
-
-	int GetExperimentRationalismPolicyWeight(CvPlayer* pPlayer, CvPolicyEntry* pkPolicyInfo)
-	{
-		const PolicyBranchTypes eRationalismBranch = GetExperimentRationalismBranch();
-		if(!IsExperimentPolicyPlayer(pPlayer) || pkPolicyInfo == NULL || eRationalismBranch == NO_POLICY_BRANCH_TYPE || pkPolicyInfo->GetPolicyBranchType() != eRationalismBranch)
+		int iWeight = 0;
+		const PolicyBranchTypes ePolicyBranch = (PolicyBranchTypes)pkPolicyInfo->GetPolicyBranchType();
+		for(int iI = 0; iI < ARRAYSIZE(g_akExperimentPolicyPreferences); iI++)
 		{
-			return 0;
+			const PolicyPreference& kPreference = g_akExperimentPolicyPreferences[iI];
+			const PolicyBranchTypes ePreferenceBranch = GetPolicyPreferenceBranch(kPreference);
+			if(ePreferenceBranch != NO_POLICY_BRANCH_TYPE && ePolicyBranch == ePreferenceBranch)
+			{
+				iWeight += kPreference.m_iPolicyBonus;
+			}
 		}
 
-		return AI_EXPERIMENT_RATIONALISM_POLICY_WEIGHT_BONUS;
+		return iWeight;
 	}
 }
 //END MOD
@@ -230,9 +237,8 @@ int CvPolicyAI::ChooseNextPolicy(CvPlayer* pPlayer)
 			int iWeight = 0;
 
 			iWeight += m_PolicyAIWeights.GetWeight(iPolicyLoop);
-			//MOD: prefer continuing Tradition for the experiment player.
-			iWeight += GetExperimentTraditionPolicyWeight(pPlayer, m_pCurrentPolicies->GetPolicies()->GetPolicyEntry(iPolicyLoop));
-			iWeight += GetExperimentRationalismPolicyWeight(pPlayer, m_pCurrentPolicies->GetPolicies()->GetPolicyEntry(iPolicyLoop));
+			//MOD: prefer configured policy branches for the experiment player.
+			iWeight += GetExperimentPolicyWeight(pPlayer, m_pCurrentPolicies->GetPolicies()->GetPolicyEntry(iPolicyLoop));
 			//END MOD
 
 			// Does this policy finish a branch for us?
@@ -309,9 +315,8 @@ int CvPolicyAI::ChooseNextPolicy(CvPlayer* pPlayer)
 						}
 					}
 
-					//MOD: prefer opening Tradition for the experiment player.
-					iBranchWeight += GetExperimentTraditionBranchWeight(pPlayer, ePolicyBranch);
-					iBranchWeight += GetExperimentRationalismBranchWeight(pPlayer, ePolicyBranch);
+					//MOD: prefer opening configured policy branches for the experiment player.
+					iBranchWeight += GetExperimentPolicyBranchWeight(pPlayer, ePolicyBranch);
 					//END MOD
 
 					m_AdoptablePolicies.push_back(iBranchLoop, iBranchWeight);
@@ -635,6 +640,37 @@ void CvPolicyAI::DoConsiderIdeologySwitch(CvPlayer* pPlayer)
 	PolicyBranchTypes eCurrentIdeology = pPlayer->GetPlayerPolicies()->GetLateGamePolicyTree();
 	PlayerTypes eMostPressure = pPlayer->GetCulture()->GetPublicOpinionBiggestInfluence();
 	
+	//MOD: if experiment AI is stuck below -6 happiness due to losing-ideology pressure, switch to the pressure-preferred ideology before revolts cost cities.
+	if(IsExperimentPolicyPlayer(pPlayer))
+	{
+		bool bIdeologyCrisis = false;
+		if(eCurrentIdeology != NO_POLICY_BRANCH_TYPE && ePreferredIdeology != NO_POLICY_BRANCH_TYPE && ePreferredIdeology != eCurrentIdeology && iCurrentHappiness < AI_EXPERIMENT_IDEOLOGY_CRISIS_HAPPINESS_THRESHOLD && iPublicOpinionUnhappiness > 0)
+		{
+			const int iPreferredPublicOpinionUnhappiness = pPlayer->GetCulture()->ComputeHypotheticalPublicOpinionUnhappiness(ePreferredIdeology);
+			bIdeologyCrisis = (iPreferredPublicOpinionUnhappiness < iPublicOpinionUnhappiness);
+		}
+
+		if(bIdeologyCrisis)
+		{
+			pPlayer->GetCulture()->ChangeSustainedIdeologyUnhappinessTurns(1);
+		}
+		else
+		{
+			pPlayer->GetCulture()->SetSustainedIdeologyUnhappinessTurns(0);
+		}
+
+		const int iSustainedIdeologyUnhappinessTurns = pPlayer->GetCulture()->GetSustainedIdeologyUnhappinessTurns();
+		const bool bRevoltLevelIdeologyCrisis = bIdeologyCrisis && iCurrentHappiness <= GC.getSUPER_UNHAPPY_THRESHOLD() && iSustainedIdeologyUnhappinessTurns >= AI_EXPERIMENT_IDEOLOGY_REVOLT_CRISIS_TURNS;
+		const bool bSustainedIdeologyCrisis = iSustainedIdeologyUnhappinessTurns > AI_EXPERIMENT_IDEOLOGY_CRISIS_TURNS;
+
+		if(bRevoltLevelIdeologyCrisis || bSustainedIdeologyCrisis)
+		{
+			pPlayer->SetAnarchyNumTurns(GC.getSWITCH_POLICY_BRANCHES_ANARCHY_TURNS());
+			pPlayer->GetPlayerPolicies()->DoSwitchIdeologies(ePreferredIdeology);
+			return;
+		}
+	}
+
 	// Possible enough that we need to look at this in detail?
 	if (iCurrentHappiness <= GC.getSUPER_UNHAPPY_THRESHOLD() && iPublicOpinionUnhappiness >= 10)
 	{

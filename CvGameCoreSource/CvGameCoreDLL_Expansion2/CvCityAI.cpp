@@ -9,6 +9,7 @@
 #include "CvGameCoreDLLPCH.h"
 #include "CvGlobals.h"
 #include "CvGameCoreUtils.h"
+//MOD: experiment production overrides use shared strategy and unit-selection helpers.
 #include "CvInternalGameCoreUtils.h"
 #include "CvCityAI.h"
 #include "CvPlot.h"
@@ -22,6 +23,7 @@
 #include "CvCitySpecializationAI.h"
 #include "CvWonderProductionAI.h"
 #include "CvGrandStrategyAI.h"
+//MOD: experiment production overrides also need military, economic, and trade helpers.
 #include "CvMilitaryAI.h"
 #include "CvEconomicAI.h"
 #include "CvTradeClasses.h"
@@ -39,6 +41,9 @@ namespace
 	const int AI_EXPERIMENT_TARGET_OPENING_LAND_COMBAT_UNITS = 2;
 	const int AI_EXPERIMENT_OPENING_BUILD_TURN_LIMIT = 35;
 	const int AI_EXPERIMENT_BARB_MILITARY_RESPONSE_TURN = 70;
+	const int AI_EXPERIMENT_URGENT_MILITARY_INTERRUPT_SECOND_CITY_THRESHOLD = 4;
+
+	CvCity* GetExperimentBestNationalCollegeCity(CvPlayerAI& kOwner, BuildingTypes eNationalCollege);
 
 	bool IsExperimentLandExplorer(CvUnitEntry* pkUnitInfo)
 	{
@@ -63,6 +68,34 @@ namespace
 		for(CvUnit* pLoopUnit = kOwner.firstUnit(&iLoop); pLoopUnit != NULL; pLoopUnit = kOwner.nextUnit(&iLoop))
 		{
 			if(IsExperimentActiveLandExplorer(pLoopUnit))
+			{
+				iCount++;
+			}
+		}
+
+		iLoop = 0;
+		for(CvCity* pLoopCity = kOwner.firstCity(&iLoop); pLoopCity != NULL; pLoopCity = kOwner.nextCity(&iLoop))
+		{
+			if(pLoopCity->isProductionUnit())
+			{
+				CvUnitEntry* pkUnitInfo = GC.getUnitInfo(pLoopCity->getProductionUnit());
+				if(IsExperimentLandExplorer(pkUnitInfo))
+				{
+					iCount++;
+				}
+			}
+		}
+
+		return iCount;
+	}
+
+	int CountExperimentOpeningScoutUnitsAndBuilds(CvPlayerAI& kOwner)
+	{
+		int iCount = 0;
+		int iLoop = 0;
+		for(CvUnit* pLoopUnit = kOwner.firstUnit(&iLoop); pLoopUnit != NULL; pLoopUnit = kOwner.nextUnit(&iLoop))
+		{
+			if(IsExperimentLandExplorer(&pLoopUnit->getUnitInfo()))
 			{
 				iCount++;
 			}
@@ -163,17 +196,6 @@ namespace
 
 		return NO_UNIT;
 	}
-	UnitTypes GetExperimentTrainableTradeUnit(CvCityAI* pCity, DomainTypes eDomain)
-	{
-		if(pCity == NULL)
-		{
-			return NO_UNIT;
-		}
-
-		UnitTypes eTradeUnit = CvPlayerTrade::GetTradeUnit(eDomain);
-		return (eTradeUnit != NO_UNIT && pCity->canTrain(eTradeUnit)) ? eTradeUnit : NO_UNIT;
-	}
-
 	UnitTypes GetExperimentTrainableWaterWorkerUnit(CvCityAI* pCity)
 	{
 		if(pCity == NULL)
@@ -196,7 +218,8 @@ namespace
 
 	int GetExperimentNonPuppetCityCount(CvPlayerAI& kOwner)
 	{
-		return max(0, kOwner.getNumCities() - kOwner.GetNumPuppetCities());
+		const StrategyState& kState = kOwner.GetGrandStrategyAI()->GetStrategyState();
+		return kState.m_kSummary.m_iNonPuppetCities;
 	}
 
 	int GetExperimentTargetWorkers(CvPlayerAI& kOwner)
@@ -223,7 +246,9 @@ namespace
 			return false;
 		}
 
-		const StrategyDirective kDirective = kOwner.GetGrandStrategyAI()->BuildStrategyDirective();
+		const StrategyState& kState = kOwner.GetGrandStrategyAI()->GetStrategyState();
+
+		const StrategyDirective& kDirective = kState.m_kDirective;
 		return kDirective.m_ePrimaryStrategy == PRIMARY_STRATEGY_MILITARISTIC_EXPANSION || kDirective.m_ePrimaryStrategy == PRIMARY_STRATEGY_MILITARY;
 	}
 
@@ -234,7 +259,9 @@ namespace
 			return StrategyDirectiveAIConstants::MILITARY_THREAT_NONE;
 		}
 
-		const StrategyDirective kDirective = kOwner.GetGrandStrategyAI()->BuildStrategyDirective();
+		const StrategyState& kState = kOwner.GetGrandStrategyAI()->GetStrategyState();
+
+		const StrategyDirective& kDirective = kState.m_kDirective;
 		return kDirective.m_iMilitaryThreatSeverity;
 	}
 
@@ -253,13 +280,15 @@ namespace
 	}
 	bool IsExperimentBarbarianThreat(CvPlayerAI& kOwner)
 	{
-		const GameStateSummary kSummary = kOwner.GetGrandStrategyAI()->BuildGameStateSummary();
+		const StrategyState& kState = kOwner.GetGrandStrategyAI()->GetStrategyState();
+		const GameStateSummary& kSummary = kState.m_kSummary;
 		return kSummary.m_bBarbarianThreat;
 	}
 
 	bool IsExperimentCityOrMajorThreat(CvPlayerAI& kOwner)
 	{
-		const StrategyDirective kDirective = kOwner.GetGrandStrategyAI()->BuildStrategyDirective();
+		const StrategyState& kState = kOwner.GetGrandStrategyAI()->GetStrategyState();
+		const StrategyDirective& kDirective = kState.m_kDirective;
 		if(kDirective.m_bNearbyThreat || kDirective.m_ePrimaryStrategy == PRIMARY_STRATEGY_MILITARY)
 		{
 			return true;
@@ -276,7 +305,8 @@ namespace
 
 	int GetExperimentTargetLandCombatUnits(CvPlayerAI& kOwner)
 	{
-		const int iNonPuppetCities = GetExperimentNonPuppetCityCount(kOwner);
+		const StrategyState& kState = kOwner.GetGrandStrategyAI()->GetStrategyState();
+		const int iNonPuppetCities = kState.m_kSummary.m_iNonPuppetCities;
 		const int iThreatSeverity = GetExperimentMilitaryThreatSeverity(kOwner);
 		if(iNonPuppetCities <= 0 || iThreatSeverity < StrategyDirectiveAIConstants::MILITARY_THREAT_MODERATE)
 		{
@@ -288,15 +318,23 @@ namespace
 		{
 			iTargetCombatUnits++;
 		}
-		if(IsExperimentCityOrMajorThreat(kOwner) || iThreatSeverity >= StrategyDirectiveAIConstants::MILITARY_THREAT_MODERATE)
+		//MOD: threat reserves depend on whether military is the current primary directive.
+		const bool bMilitaryDirective = IsExperimentMilitaryDirective(kOwner);
+		if(IsExperimentCityOrMajorThreat(kOwner))
+		{
+			//MOD: non-primary military threat should keep a lean reserve, not quietly build a full war-sized army.
+			const int iThreatTarget = bMilitaryDirective ? ((iNonPuppetCities * 2) + 1) : (iNonPuppetCities + 2);
+			iTargetCombatUnits = max(iTargetCombatUnits, iThreatTarget);
+		}
+		else if(bMilitaryDirective && iThreatSeverity >= StrategyDirectiveAIConstants::MILITARY_THREAT_MODERATE)
 		{
 			iTargetCombatUnits = max(iTargetCombatUnits, (iNonPuppetCities * 2) + 1);
 		}
 		if(iThreatSeverity >= StrategyDirectiveAIConstants::MILITARY_THREAT_HIGH)
 		{
-			iTargetCombatUnits = max(iTargetCombatUnits, (iNonPuppetCities * 3) + 1);
-
-			const GameStateSummary kSummary = kOwner.GetGrandStrategyAI()->BuildGameStateSummary();
+			const int iHighThreatTarget = bMilitaryDirective ? ((iNonPuppetCities * 3) + 1) : ((iNonPuppetCities * 2) + 1);
+			iTargetCombatUnits = max(iTargetCombatUnits, iHighThreatTarget);
+			const GameStateSummary& kSummary = kState.m_kSummary;
 			if(kSummary.m_iRelevantMilitaryAverage > 0 && kSummary.m_iMilitaryPercentOfRelevantAverage < StrategyDirectiveAIConstants::MILITARY_RELEVANT_SHORTFALL_TARGET_PERCENT)
 			{
 				const int iShortfall = StrategyDirectiveAIConstants::MILITARY_RELEVANT_SHORTFALL_TARGET_PERCENT - kSummary.m_iMilitaryPercentOfRelevantAverage;
@@ -338,42 +376,11 @@ namespace
 			return false;
 		}
 
-		CvCity* pCapital = kOwner.getCapitalCity();
-		if(pCapital == NULL)
-		{
-			return false;
-		}
+		const StrategyState& kState = kOwner.GetGrandStrategyAI()->GetStrategyState();
 
-		const BuildingTypes eNationalCollege = GetExperimentBuildingForClass(kOwner, "BUILDINGCLASS_NATIONAL_COLLEGE");
-		if(eNationalCollege == NO_BUILDING || pCapital->GetCityBuildings()->GetNumBuilding(eNationalCollege) > 0)
-		{
-			return false;
-		}
-
-		if(pCapital->getFirstBuildingOrder(eNationalCollege) != -1 || pCapital->canConstruct(eNationalCollege))
-		{
-			return true;
-		}
-
-		const BuildingTypes eLibrary = GetExperimentBuildingForClass(kOwner, "BUILDINGCLASS_LIBRARY");
-		if(eLibrary == NO_BUILDING)
-		{
-			return false;
-		}
-
-		int iLoop = 0;
-		for(CvCity* pLoopCity = kOwner.firstCity(&iLoop); pLoopCity != NULL; pLoopCity = kOwner.nextCity(&iLoop))
-		{
-			if(!pLoopCity->IsPuppet() && pLoopCity->GetCityBuildings()->GetNumBuilding(eLibrary) == 0 && (pLoopCity->canConstruct(eLibrary) || pLoopCity->getFirstBuildingOrder(eLibrary) != -1))
-			{
-				return true;
-			}
-		}
-
-		return false;
+		const NationalCollegeStatus eStatus = kState.m_eNationalCollegeStatus;
+		return eStatus == NC_STATUS_WAITING_FOR_LIBRARIES || eStatus == NC_STATUS_READY_TO_BUILD || eStatus == NC_STATUS_QUEUED;
 	}
-
-
 	bool IsExperimentThreatMilitaryPivotNeeded(CvPlayerAI& kOwner)
 	{
 		if(!ShouldUseStrategyDirectiveAI(kOwner.GetID()))
@@ -399,6 +406,144 @@ namespace
 		return pCity != NULL && eBuilding != NO_BUILDING && pCity->isProductionBuilding() && pCity->getProductionBuilding() == eBuilding;
 	}
 
+	//MOD: treasury recovery should not interrupt committed NC or wonder builds.
+	bool IsExperimentCityProducingWonder(CvCityAI* pCity, CvPlayerAI& kOwner)
+	{
+		if(pCity == NULL || !pCity->isProductionBuilding())
+		{
+			return false;
+		}
+
+		CvBuildingEntry* pkBuildingInfo = GC.getBuildingInfo(pCity->getProductionBuilding());
+		return pkBuildingInfo != NULL && kOwner.GetWonderProductionAI()->IsWonder(*pkBuildingInfo);
+	}
+
+	bool IsExperimentTreasuryProtectedProduction(CvCityAI* pCity, CvPlayerAI& kOwner)
+	{
+		const BuildingTypes eNationalCollege = GetExperimentBuildingForClass(kOwner, "BUILDINGCLASS_NATIONAL_COLLEGE");
+		return IsExperimentCityProducingBuilding(pCity, eNationalCollege) || IsExperimentCityProducingWonder(pCity, kOwner);
+	}
+	int GetExperimentUrgentMilitaryInterruptLimit(CvPlayerAI& kOwner)
+	{
+		const StrategyState& kState = kOwner.GetGrandStrategyAI()->GetStrategyState();
+		return kState.m_kSummary.m_iNonPuppetCities >= AI_EXPERIMENT_URGENT_MILITARY_INTERRUPT_SECOND_CITY_THRESHOLD ? 2 : 1;
+	}
+
+	int CountExperimentCitiesProducingLandCombat(CvPlayerAI& kOwner)
+	{
+		int iCount = 0;
+		int iCityLoop = 0;
+		for(CvCity* pLoopCity = kOwner.firstCity(&iCityLoop); pLoopCity != NULL; pLoopCity = kOwner.nextCity(&iCityLoop))
+		{
+			if(IsExperimentCityProducingLandCombat((CvCityAI*)pLoopCity))
+			{
+				iCount++;
+			}
+		}
+
+		return iCount;
+	}
+
+	//MOD: the selected National College city is reserved for NC unless threat severity reaches the highest tier.
+	bool IsExperimentNationalCollegeCityReserved(CvCityAI* pCity, CvPlayerAI& kOwner)
+	{
+		if(pCity == NULL || pCity->IsPuppet() || GetExperimentMilitaryThreatSeverity(kOwner) >= StrategyDirectiveAIConstants::MILITARY_THREAT_HIGH || !IsExperimentNationalCollegePending(kOwner))
+		{
+			return false;
+		}
+
+		const BuildingTypes eNationalCollege = GetExperimentBuildingForClass(kOwner, "BUILDINGCLASS_NATIONAL_COLLEGE");
+		return eNationalCollege != NO_BUILDING && GetExperimentBestNationalCollegeCity(kOwner, eNationalCollege) == pCity;
+	}
+	//MOD: reserve the selected wonder city from moderate military interruptions; NC reservation takes priority.
+	bool IsExperimentWonderBuildCityReserved(CvCityAI* pCity, CvPlayerAI& kOwner)
+	{
+		if(pCity == NULL || pCity->IsPuppet() || GetExperimentMilitaryThreatSeverity(kOwner) >= StrategyDirectiveAIConstants::MILITARY_THREAT_HIGH || IsExperimentNationalCollegePending(kOwner))
+		{
+			return false;
+		}
+
+		CvCitySpecializationAI* pSpecializationAI = kOwner.GetCitySpecializationAI();
+		if(pSpecializationAI == NULL || pSpecializationAI->GetWonderBuildCity() != pCity)
+		{
+			return false;
+		}
+
+		const BuildingTypes eNextWonder = pSpecializationAI->GetNextWonderDesired();
+		return eNextWonder != NO_BUILDING && (pCity->canConstruct(eNextWonder, true) || IsExperimentCityProducingBuilding(pCity, eNextWonder));
+	}
+
+	bool IsExperimentPriorityBuildCityReserved(CvCityAI* pCity, CvPlayerAI& kOwner)
+	{
+		return IsExperimentNationalCollegeCityReserved(pCity, kOwner) || IsExperimentWonderBuildCityReserved(pCity, kOwner);
+	}
+	bool IsExperimentUrgentMilitaryInterruptCandidate(CvCityAI* pCity, CvPlayerAI& kOwner)
+	{
+		if(pCity == NULL || pCity->IsPuppet() || IsExperimentCityProducingLandCombat(pCity) || IsExperimentPriorityBuildCityReserved(pCity, kOwner))
+		{
+			return false;
+		}
+
+		if(!pCity->isProduction())
+		{
+			return true;
+		}
+
+		return pCity->isProductionBuilding() && !IsExperimentTreasuryProtectedProduction(pCity, kOwner);
+	}
+
+	//MOD: urgent military at moderate threat can interrupt only the best few non-wonder/NC queues.
+	bool IsExperimentUrgentMilitaryInterruptNeeded(CvCityAI* pCity, CvPlayerAI& kOwner)
+	{
+		if(pCity == NULL || pCity->IsPuppet() || IsExperimentCityProducingLandCombat(pCity) || !ShouldUseStrategyDirectiveAI(kOwner.GetID()) || !IsExperimentLocalMilitaryDeficit(kOwner))
+		{
+			return false;
+		}
+
+		if(IsExperimentThreatMilitaryPivotNeeded(kOwner))
+		{
+			return true;
+		}
+
+		if(!IsExperimentUrgentMilitaryInterruptCandidate(pCity, kOwner))
+		{
+			return false;
+		}
+
+		const StrategyState& kState = kOwner.GetGrandStrategyAI()->GetStrategyState();
+		const StrategyDirective& kDirective = kState.m_kDirective;
+		if(kDirective.m_ePrimaryStrategy != PRIMARY_STRATEGY_MILITARY || !kDirective.m_bMilitaryProductionUrgent || kDirective.m_iMilitaryThreatSeverity < StrategyDirectiveAIConstants::MILITARY_THREAT_MODERATE)
+		{
+			return false;
+		}
+
+		const int iInterruptLimit = GetExperimentUrgentMilitaryInterruptLimit(kOwner);
+		if(CountExperimentCitiesProducingLandCombat(kOwner) >= iInterruptLimit)
+		{
+			return false;
+		}
+
+		const int iCityProduction = pCity->getCurrentProductionDifference(true, false);
+		int iBetterCandidates = 0;
+		int iCityLoop = 0;
+		for(CvCity* pLoopCity = kOwner.firstCity(&iCityLoop); pLoopCity != NULL; pLoopCity = kOwner.nextCity(&iCityLoop))
+		{
+			CvCityAI* pLoopCityAI = (CvCityAI*)pLoopCity;
+			if(pLoopCityAI == pCity || !IsExperimentUrgentMilitaryInterruptCandidate(pLoopCityAI, kOwner))
+			{
+				continue;
+			}
+
+			const int iLoopProduction = pLoopCityAI->getCurrentProductionDifference(true, false);
+			if(iLoopProduction > iCityProduction || (iLoopProduction == iCityProduction && pLoopCityAI->GetID() < pCity->GetID()))
+			{
+				iBetterCandidates++;
+			}
+		}
+
+		return iBetterCandidates < iInterruptLimit;
+	}
+
 	bool IsExperimentTreasuryRecoveryDirective(CvPlayerAI& kOwner)
 	{
 		if(!ShouldUseStrategyDirectiveAI(kOwner.GetID()))
@@ -406,7 +551,9 @@ namespace
 			return false;
 		}
 
-		const StrategyDirective kDirective = kOwner.GetGrandStrategyAI()->BuildStrategyDirective();
+		const StrategyState& kState = kOwner.GetGrandStrategyAI()->GetStrategyState();
+
+		const StrategyDirective& kDirective = kState.m_kDirective;
 		return kDirective.m_ePrimaryStrategy == PRIMARY_STRATEGY_TREASURY_RECOVERY;
 	}
 
@@ -485,12 +632,17 @@ namespace
 
 	bool IsExperimentTreasuryBuildingSwitchNeeded(CvCityAI* pCity, CvPlayerAI& kOwner)
 	{
-		return pCity != NULL && !pCity->IsPuppet() && pCity->isProduction() && IsExperimentTreasuryRecoveryDirective(kOwner) && !IsExperimentCityProducingTreasuryBuilding(pCity) && GetExperimentBestTreasuryBuilding(pCity) != NO_BUILDING;
+		return pCity != NULL && !pCity->IsPuppet() && pCity->isProduction() && IsExperimentTreasuryRecoveryDirective(kOwner) && !IsExperimentTreasuryProtectedProduction(pCity, kOwner) && !IsExperimentCityProducingTreasuryBuilding(pCity) && GetExperimentBestTreasuryBuilding(pCity) != NO_BUILDING;
 	}
 
 	bool TryChooseExperimentTreasuryBuilding(CvCityAI* pCity, CvPlayerAI& kOwner)
 	{
 		if(pCity == NULL || pCity->IsPuppet() || !IsExperimentTreasuryRecoveryDirective(kOwner))
+		{
+			return false;
+		}
+
+		if(IsExperimentTreasuryProtectedProduction(pCity, kOwner))
 		{
 			return false;
 		}
@@ -553,15 +705,36 @@ namespace
 		return false;
 	}
 
-	bool TryChooseExperimentLuxuryWorkBoat(CvCityAI* pCity, CvPlayerAI& kOwner)
+	bool IsExperimentLuxuryWorkBoatNeeded(CvCityAI* pCity, CvPlayerAI& kOwner)
 	{
 		if(pCity == NULL || pCity->IsPuppet() || !ShouldUseStrategyDirectiveAI(kOwner.GetID()) || !HasExperimentUnimprovedOwnedWaterLuxury(pCity, kOwner))
 		{
 			return false;
 		}
 
+		const BuildingTypes eNationalCollege = GetExperimentBuildingForClass(kOwner, "BUILDINGCLASS_NATIONAL_COLLEGE");
+		if(IsExperimentCityProducingBuilding(pCity, eNationalCollege))
+		{
+			return false;
+		}
+
 		CvCity* pThreatenedCity = kOwner.GetMilitaryAI()->GetMostThreatenedCity();
 		if(pThreatenedCity == pCity && pThreatenedCity->getThreatValue() > 200 && IsExperimentLocalMilitaryDeficit(kOwner))
+		{
+			return false;
+		}
+
+		return IsExperimentCityProducingUnitAI(pCity, UNITAI_WORKER_SEA) || GetExperimentTrainableWaterWorkerUnit(pCity) != NO_UNIT;
+	}
+
+	bool IsExperimentLuxuryWorkBoatSwitchNeeded(CvCityAI* pCity, CvPlayerAI& kOwner)
+	{
+		return pCity != NULL && pCity->isProduction() && IsExperimentLuxuryWorkBoatNeeded(pCity, kOwner) && !IsExperimentCityProducingUnitAI(pCity, UNITAI_WORKER_SEA);
+	}
+
+	bool TryChooseExperimentLuxuryWorkBoat(CvCityAI* pCity, CvPlayerAI& kOwner)
+	{
+		if(!IsExperimentLuxuryWorkBoatNeeded(pCity, kOwner))
 		{
 			return false;
 		}
@@ -590,7 +763,9 @@ namespace
 			return false;
 		}
 
-		const StrategyDirective kDirective = kOwner.GetGrandStrategyAI()->BuildStrategyDirective();
+		const StrategyState& kState = kOwner.GetGrandStrategyAI()->GetStrategyState();
+
+		const StrategyDirective& kDirective = kState.m_kDirective;
 		if(kDirective.m_iSettlerWeightBonus <= 0)
 		{
 			return false;
@@ -634,7 +809,7 @@ namespace
 
 	bool TryChooseExperimentThreatMilitaryPivot(CvCityAI* pCity, CvPlayerAI& kOwner)
 	{
-		if(pCity == NULL || pCity->IsPuppet() || !IsExperimentThreatMilitaryPivotNeeded(kOwner) || IsExperimentCityProducingLandCombat(pCity))
+		if(pCity == NULL || pCity->IsPuppet() || !IsExperimentUrgentMilitaryInterruptNeeded(pCity, kOwner) || IsExperimentCityProducingLandCombat(pCity))
 		{
 			return false;
 		}
@@ -662,6 +837,42 @@ namespace
 		return true;
 	}
 
+	//MOD: choose the National College city by current production pace instead of hardcoding the capital.
+	CvCity* GetExperimentBestNationalCollegeCity(CvPlayerAI& kOwner, BuildingTypes eNationalCollege)
+	{
+		if(eNationalCollege == NO_BUILDING)
+		{
+			return NULL;
+		}
+
+		CvCity* pBestCity = NULL;
+		int iBestProductionPerTurn = -1;
+
+		int iCityLoop = 0;
+		for(CvCity* pLoopCity = kOwner.firstCity(&iCityLoop); pLoopCity != NULL; pLoopCity = kOwner.nextCity(&iCityLoop))
+		{
+			if(pLoopCity->IsPuppet())
+			{
+				continue;
+			}
+
+			const bool bAlreadyQueuedHere = pLoopCity->getFirstBuildingOrder(eNationalCollege) != -1;
+			if(!bAlreadyQueuedHere && !pLoopCity->canConstruct(eNationalCollege))
+			{
+				continue;
+			}
+
+			const int iProductionPerTurn = pLoopCity->getCurrentProductionDifference(true, false);
+			if(pBestCity == NULL || iProductionPerTurn > iBestProductionPerTurn || (iProductionPerTurn == iBestProductionPerTurn && pLoopCity->isCapital() && !pBestCity->isCapital()))
+			{
+				iBestProductionPerTurn = iProductionPerTurn;
+				pBestCity = pLoopCity;
+			}
+		}
+
+		return pBestCity;
+	}
+
 	BuildingTypes GetExperimentScienceInfrastructureBuilding(CvCityAI* pCity, CvPlayerAI& kOwner)
 	{
 		if(pCity == NULL || pCity->IsPuppet() || !ShouldUseStrategyDirectiveAI(kOwner.GetID()) || GC.getGame().getGameTurn() < StrategyDirectiveAIConstants::SCIENCE_INFRASTRUCTURE_PRIORITY_TURN)
@@ -672,7 +883,8 @@ namespace
 		if(IsExperimentNationalCollegePending(kOwner))
 		{
 			const BuildingTypes eNationalCollege = GetExperimentBuildingForClass(kOwner, "BUILDINGCLASS_NATIONAL_COLLEGE");
-			if(pCity->isCapital() && eNationalCollege != NO_BUILDING && pCity->canConstruct(eNationalCollege))
+			CvCity* pNationalCollegeCity = GetExperimentBestNationalCollegeCity(kOwner, eNationalCollege);
+			if(pNationalCollegeCity == pCity)
 			{
 				return eNationalCollege;
 			}
@@ -719,6 +931,12 @@ namespace
 			return false;
 		}
 
+		if(IsExperimentThreatMilitaryPivotNeeded(kOwner) && IsExperimentCityProducingLandCombat(pCity))
+		{
+			pCity->AI_setChooseProductionDirty(false);
+			return true;
+		}
+
 		pCity->pushOrder(ORDER_CONSTRUCT, eBuilding, -1, false, pCity->isProduction(), false, false);
 		pCity->AI_setChooseProductionDirty(false);
 		return true;
@@ -735,79 +953,15 @@ namespace
 		return eBuilding != NO_BUILDING && !IsExperimentCityProducingBuilding(pCity, eBuilding);
 	}
 
-	bool HasExperimentInternalFoodRoute(CvPlayerAI& kOwner, DomainTypes eDomain)
+	bool IsExperimentWonderBuildSwitchNeeded(CvCityAI* pCity, CvPlayerAI& kOwner)
 	{
-		if(eDomain != DOMAIN_LAND && eDomain != DOMAIN_SEA)
+		if(pCity == NULL || pCity->IsPuppet() || !pCity->isProduction() || !IsExperimentWonderBuildCityReserved(pCity, kOwner) || IsExperimentCityProducingWonder(pCity, kOwner))
 		{
 			return false;
 		}
 
-		if(kOwner.getNumCities() <= 1)
-		{
-			return false;
-		}
-
-		int iOriginLoop = 0;
-		for(CvCity* pOriginCity = kOwner.firstCity(&iOriginLoop); pOriginCity != NULL; pOriginCity = kOwner.nextCity(&iOriginLoop))
-		{
-			if(pOriginCity->IsPuppet())
-			{
-				continue;
-			}
-
-			int iDestLoop = 0;
-			for(CvCity* pDestCity = kOwner.firstCity(&iDestLoop); pDestCity != NULL; pDestCity = kOwner.nextCity(&iDestLoop))
-			{
-				if(pDestCity == pOriginCity || pDestCity->IsPuppet())
-				{
-					continue;
-				}
-
-				if(kOwner.GetTrade()->CanCreateTradeRoute(pOriginCity, pDestCity, eDomain, TRADE_CONNECTION_FOOD, false))
-				{
-					return true;
-				}
-			}
-		}
-
-		return false;
+		return true;
 	}
-
-	bool TryChooseExperimentInternalFoodTradeUnit(CvCityAI* pCity, CvPlayerAI& kOwner)
-	{
-		if(pCity == NULL || pCity->IsPuppet() || pCity->isProduction() || !ShouldUseStrategyDirectiveAI(kOwner.GetID()) || GC.getGame().getGameTurn() > StrategyDirectiveAIConstants::INTERNAL_FOOD_TRADE_PRIORITY_END_TURN || IsExperimentNationalCollegePending(kOwner))
-		{
-			return false;
-		}
-
-		if(kOwner.GetTrade()->GetNumTradeRoutesRemaining(true) <= 0)
-		{
-			return false;
-		}
-
-		UnitTypes eTradeUnit = NO_UNIT;
-		DomainTypes eTradeDomain = NO_DOMAIN;
-		if(HasExperimentInternalFoodRoute(kOwner, DOMAIN_SEA))
-		{
-			eTradeUnit = GetExperimentTrainableTradeUnit(pCity, DOMAIN_SEA);
-			eTradeDomain = DOMAIN_SEA;
-		}
-		if(eTradeUnit == NO_UNIT && HasExperimentInternalFoodRoute(kOwner, DOMAIN_LAND))
-		{
-			eTradeUnit = GetExperimentTrainableTradeUnit(pCity, DOMAIN_LAND);
-			eTradeDomain = DOMAIN_LAND;
-		}
-
-		if(eTradeUnit == NO_UNIT)
-		{
-			return false;
-		}
-
-		pCity->pushOrder(ORDER_TRAIN, eTradeUnit, UNITAI_TRADE_UNIT, false, false, false, false);
-		pCity->AI_setChooseProductionDirty(false);
-		return eTradeDomain != NO_DOMAIN;
-	}
-
 	bool TryChooseExperimentWorkerDeficit(CvCityAI* pCity, CvPlayerAI& kOwner)
 	{
 		if(pCity == NULL || pCity->IsPuppet() || pCity->isProduction() || !ShouldUseStrategyDirectiveAI(kOwner.GetID()) || GC.getGame().getGameTurn() <= StrategyDirectiveAIConstants::WORKER_BASE_RATIO_TURN || IsExperimentNationalCollegePending(kOwner))
@@ -815,7 +969,9 @@ namespace
 			return false;
 		}
 
-		const StrategyDirective kDirective = kOwner.GetGrandStrategyAI()->BuildStrategyDirective();
+		const StrategyState& kState = kOwner.GetGrandStrategyAI()->GetStrategyState();
+
+		const StrategyDirective& kDirective = kState.m_kDirective;
 		if(kDirective.m_ePrimaryStrategy == PRIMARY_STRATEGY_MILITARISTIC_EXPANSION || kDirective.m_ePrimaryStrategy == PRIMARY_STRATEGY_MILITARY)
 		{
 			return false;
@@ -870,7 +1026,9 @@ namespace
 			return false;
 		}
 
-		const StrategyDirective kDirective = kOwner.GetGrandStrategyAI()->BuildStrategyDirective();
+		const StrategyState& kState = kOwner.GetGrandStrategyAI()->GetStrategyState();
+
+		const StrategyDirective& kDirective = kState.m_kDirective;
 		if(IsExperimentNationalCollegePending(kOwner) || kDirective.m_ePrimaryStrategy == PRIMARY_STRATEGY_EXPANSION || kDirective.m_iMilitaryThreatSeverity >= StrategyDirectiveAIConstants::MILITARY_THREAT_MODERATE)
 		{
 			return true;
@@ -890,7 +1048,7 @@ namespace
 			return false;
 		}
 
-		if(CountExperimentLandExplorersAndBuilds(kOwner) >= AI_EXPERIMENT_TARGET_LAND_EXPLORERS)
+		if(CountExperimentOpeningScoutUnitsAndBuilds(kOwner) >= AI_EXPERIMENT_TARGET_LAND_EXPLORERS)
 		{
 			return false;
 		}
@@ -929,7 +1087,7 @@ namespace
 
 		UnitTypes eUnit = NO_UNIT;
 		UnitAITypes eUnitAI = NO_UNITAI;
-		if(CountExperimentLandExplorersAndBuilds(kOwner) < AI_EXPERIMENT_TARGET_LAND_EXPLORERS)
+		if(CountExperimentOpeningScoutUnitsAndBuilds(kOwner) < AI_EXPERIMENT_TARGET_LAND_EXPLORERS)
 		{
 			eUnitAI = UNITAI_EXPLORE;
 			eUnit = GetExperimentTrainableLandUnit(pCity, eUnitAI);
@@ -1100,7 +1258,15 @@ void CvCityAI::AI_doTurn()
 		{
 			AI_chooseProduction(false /*bInterruptWonders*/);
 		}
+		else if(isProduction() && IsExperimentLuxuryWorkBoatSwitchNeeded(this, kOwner))
+		{
+			AI_chooseProduction(false /*bInterruptWonders*/);
+		}
 		else if(isProduction() && IsExperimentScienceInfrastructureSwitchNeeded(this, kOwner))
+		{
+			AI_chooseProduction(false /*bInterruptWonders*/);
+		}
+		else if(isProduction() && IsExperimentWonderBuildSwitchNeeded(this, kOwner))
 		{
 			AI_chooseProduction(false /*bInterruptWonders*/);
 		}
@@ -1108,7 +1274,7 @@ void CvCityAI::AI_doTurn()
 		{
 			AI_setChooseProductionDirty(true);
 		}
-		else if(isProduction() && !IsExperimentCityProducingLandCombat(this) && IsExperimentThreatMilitaryPivotNeeded(kOwner))
+		else if(isProduction() && IsExperimentUrgentMilitaryInterruptNeeded(this, kOwner))
 		{
 			AI_setChooseProductionDirty(true);
 		}
@@ -1123,6 +1289,12 @@ void CvCityAI::AI_chooseProduction(bool bInterruptWonders)
 	bool bBuildWonder = false;
 	//MOD: force the first scout before any other opening override
 	if(TryChooseExperimentOpeningScout(this, kOwner))
+	{
+		return;
+	}
+
+	//MOD: force luxury Work Boats before broader production priorities, unless this city is directly threatened
+	if(TryChooseExperimentLuxuryWorkBoat(this, kOwner))
 	{
 		return;
 	}
@@ -1151,11 +1323,6 @@ void CvCityAI::AI_chooseProduction(bool bInterruptWonders)
 		return;
 	}
 
-	//MOD: force luxury Work Boats before broader non-science building priorities, unless this city is directly threatened
-	if(TryChooseExperimentLuxuryWorkBoat(this, kOwner))
-	{
-		return;
-	}
 
 	//MOD: force a minimal opening Scout/combat baseline before vanilla production choice
 	if(TryChooseExperimentOpeningBuild(this, kOwner))
@@ -1168,20 +1335,27 @@ void CvCityAI::AI_chooseProduction(bool bInterruptWonders)
 	{
 		return;
 	}
+	//MOD: expansion directive should directly claim settler production before softer worker/trade priorities
+	if(TryChooseExperimentExpansionSettler(this, kOwner))
+	{
+		return;
+	}
 	//MOD: force the worker target once science infrastructure is not blocking: 1/city until the full-ratio turn, then 1.5/city
 	if(TryChooseExperimentWorkerDeficit(this, kOwner))
 	{
 		return;
 	}
-	//MOD: build trade units for early internal food routes from Granary expands to the capital
-	if(TryChooseExperimentInternalFoodTradeUnit(this, kOwner))
-	{
-		return;
-	}
+
 
 // See if this is the one AI city that is supposed to be building wonders
 	if(pSpecializationAI->GetWonderBuildCity() == this)
 	{
+		//MOD: under highest threat, let an already-started military unit finish instead of flipping to a wonder.
+		if(IsExperimentThreatMilitaryPivotNeeded(kOwner) && IsExperimentCityProducingLandCombat(this))
+		{
+			AI_setChooseProductionDirty(false);
+			return;
+		}
 		// Is it still working on that wonder and we don't want to interrupt it?
 		if(!bInterruptWonders)
 		{
@@ -1197,7 +1371,7 @@ void CvCityAI::AI_chooseProduction(bool bInterruptWonders)
 
 		// Has the designated wonder been poached by another civ?
 		BuildingTypes eNextWonder = pSpecializationAI->GetNextWonderDesired();
-		if(!canConstruct(eNextWonder))
+		if(!canConstruct(eNextWonder, true))
 		{
 			// Reset city specialization
 			kOwner.GetCitySpecializationAI()->SetSpecializationsDirty(SPECIALIZATION_UPDATE_WONDER_BUILT_BY_RIVAL);

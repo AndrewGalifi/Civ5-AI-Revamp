@@ -30,6 +30,127 @@
 
 #define LINT_WARNINGS_ONLY
 #include "LintFree.h"
+//MOD: release blocked founding operations and send the settler back into owned territory.
+static bool ShouldExperimentSettlerOperationReturnToEmpire(PlayerTypes ePlayer)
+{
+	if(ePlayer == NO_PLAYER || !ShouldUseStrategyDirectiveAI(ePlayer))
+	{
+		return false;
+	}
+
+	const StrategyState& kState = GET_PLAYER(ePlayer).GetGrandStrategyAI()->GetStrategyState();
+	const NationalCollegeStatus eStatus = kState.m_eNationalCollegeStatus;
+	const bool bNationalCollegePending = GC.getGame().getGameTurn() >= StrategyDirectiveAIConstants::NC_CITY_FOUNDING_SUPPRESSION_TURN &&
+		(eStatus == NC_STATUS_WAITING_FOR_LIBRARIES || eStatus == NC_STATUS_READY_TO_BUILD || eStatus == NC_STATUS_QUEUED);
+	return bNationalCollegePending || kState.m_kDirective.m_bUniqueLuxuryExpansionBlocked;
+}
+
+static CvPlot* GetExperimentSettlerOperationReturnPlot(CvPlayer* pPlayer, CvUnit* pUnit)
+{
+	if(pPlayer == NULL || pUnit == NULL || pUnit->AI_getUnitAIType() != UNITAI_SETTLE)
+	{
+		return NULL;
+	}
+
+	if(pUnit->plot() != NULL && pUnit->plot()->getOwner() == pPlayer->GetID())
+	{
+		return pUnit->plot();
+	}
+
+	CvMap& kMap = GC.getMap();
+	CvPlot* pBestPlot = NULL;
+	int iBestValue = MIN_INT;
+	const PlayerTypes eOwner = pPlayer->GetID();
+
+	for(int iPlotLoop = 0; iPlotLoop < kMap.numPlots(); iPlotLoop++)
+	{
+		CvPlot* pLoopPlot = kMap.plotByIndexUnchecked(iPlotLoop);
+		if(pLoopPlot == NULL || pLoopPlot->getOwner() != eOwner || pLoopPlot->isVisibleEnemyUnit(pUnit))
+		{
+			continue;
+		}
+
+		if(!pUnit->canMoveInto(*pLoopPlot, CvUnit::MOVEFLAG_DESTINATION | CvUnit::MOVEFLAG_PRETEND_CORRECT_EMBARK_STATE))
+		{
+			continue;
+		}
+
+		int iPathTurns = 0;
+		if(!pUnit->GeneratePath(pLoopPlot, MOVE_UNITS_IGNORE_DANGER, true, &iPathTurns))
+		{
+			continue;
+		}
+
+		const int iDanger = pPlayer->GetPlotDanger(*pLoopPlot);
+		int iValue = 10000 - (iPathTurns * 250) - (plotDistance(pUnit->getX(), pUnit->getY(), pLoopPlot->getX(), pLoopPlot->getY()) * 10) - (iDanger * 100);
+
+		CvCity* pCity = pLoopPlot->getPlotCity();
+		if(pCity != NULL && pCity->getOwner() == eOwner)
+		{
+			iValue += 5000;
+		}
+		else
+		{
+			for(int iDirectionLoop = 0; iDirectionLoop < NUM_DIRECTION_TYPES; iDirectionLoop++)
+			{
+				CvPlot* pAdjacentPlot = plotDirection(pLoopPlot->getX(), pLoopPlot->getY(), ((DirectionTypes)iDirectionLoop));
+				CvCity* pAdjacentCity = (pAdjacentPlot != NULL)? pAdjacentPlot->getPlotCity() : NULL;
+				if(pAdjacentCity != NULL && pAdjacentCity->getOwner() == eOwner)
+				{
+					iValue += 1000;
+					break;
+				}
+			}
+		}
+
+		if(iDanger == 0)
+		{
+			iValue += 750;
+		}
+
+		if(iValue > iBestValue)
+		{
+			iBestValue = iValue;
+			pBestPlot = pLoopPlot;
+		}
+	}
+
+	return pBestPlot;
+}
+static bool TryExperimentReturnBlockedFoundingSettler(PlayerTypes eOwner, CvArmyAI* pArmy, CvPlot** ppReturnPlot)
+{
+	if(ppReturnPlot != NULL)
+	{
+		*ppReturnPlot = NULL;
+	}
+
+	if(!ShouldExperimentSettlerOperationReturnToEmpire(eOwner) || pArmy == NULL)
+	{
+		return false;
+	}
+
+	const int iUnitID = pArmy->GetFirstUnitID();
+	CvUnit* pSettler = (iUnitID != -1)? GET_PLAYER(eOwner).getUnit(iUnitID) : NULL;
+	if(pSettler == NULL || pSettler->AI_getUnitAIType() != UNITAI_SETTLE)
+	{
+		return false;
+	}
+
+	CvPlot* pReturnPlot = GetExperimentSettlerOperationReturnPlot(&GET_PLAYER(eOwner), pSettler);
+	if(ppReturnPlot != NULL)
+	{
+		*ppReturnPlot = pReturnPlot;
+	}
+
+	if(pReturnPlot != NULL && pReturnPlot != pSettler->plot())
+	{
+		pSettler->PushMission(CvTypes::getMISSION_MOVE_TO(), pReturnPlot->getX(), pReturnPlot->getY(), MOVE_UNITS_IGNORE_DANGER);
+		pSettler->finishMoves();
+	}
+
+	return true;
+}
+//END MOD
 // PUBLIC FUNCTIONS
 
 /// Constructor
@@ -3113,6 +3234,30 @@ bool CvAIOperationFoundCity::ArmyInPosition(CvArmyAI* pArmy)
 	CvUnit* pSettler = 0, *pEscort = 0;
 	CvString strMsg;
 
+	//MOD: Blocked expansion should park active operation settlers inside owned territory, not retarget them forever.
+	CvPlot* pReturnPlot = NULL;
+	if(TryExperimentReturnBlockedFoundingSettler(m_eOwner, pArmy, &pReturnPlot))
+	{
+		m_eCurrentState = AI_OPERATION_STATE_ABORTED;
+		m_eAbortReason = AI_ABORT_NO_TARGET;
+
+		if(GC.getLogging() && GC.getAILogging())
+		{
+			if(pReturnPlot != NULL)
+			{
+				strMsg.Format("Expansion blocked; returning founding settler to owned territory, X=%d, Y=%d", pReturnPlot->getX(), pReturnPlot->getY());
+			}
+			else
+			{
+				strMsg.Format("Expansion blocked; aborting founding operation but no owned return plot was found");
+			}
+			LogOperationSpecialMessage(strMsg);
+		}
+
+		return true;
+	}
+	//END MOD
+
 	switch(m_eCurrentState)
 	{
 		// If we were gathering forces, we have to insist that any escort is in the same plot as the settler.
@@ -5197,6 +5342,30 @@ bool CvAINavalEscortedOperation::ArmyInPosition(CvArmyAI* pArmy)
 	bool bStateChanged = false;
 	CvUnit* pSettler = 0, *pEscort = 0;
 	CvString strMsg;
+
+	//MOD: Blocked expansion should park active operation settlers inside owned territory, not retarget them forever.
+	CvPlot* pReturnPlot = NULL;
+	if(TryExperimentReturnBlockedFoundingSettler(m_eOwner, pArmy, &pReturnPlot))
+	{
+		m_eCurrentState = AI_OPERATION_STATE_ABORTED;
+		m_eAbortReason = AI_ABORT_NO_TARGET;
+
+		if(GC.getLogging() && GC.getAILogging())
+		{
+			if(pReturnPlot != NULL)
+			{
+				strMsg.Format("Expansion blocked; returning founding settler to owned territory, X=%d, Y=%d", pReturnPlot->getX(), pReturnPlot->getY());
+			}
+			else
+			{
+				strMsg.Format("Expansion blocked; aborting founding operation but no owned return plot was found");
+			}
+			LogOperationSpecialMessage(strMsg);
+		}
+
+		return true;
+	}
+	//END MOD
 
 	switch(m_eCurrentState)
 	{

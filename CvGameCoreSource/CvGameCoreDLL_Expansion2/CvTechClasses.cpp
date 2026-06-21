@@ -36,7 +36,9 @@ namespace
 			return iBaseFlavorValue;
 		}
 
-		const StrategyDirective kDirective = pPlayer->GetGrandStrategyAI()->BuildStrategyDirective();
+		const StrategyState& kState = pPlayer->GetGrandStrategyAI()->GetStrategyState();
+
+		const StrategyDirective& kDirective = kState.m_kDirective;
 		int iFlavorValue = iBaseFlavorValue;
 
 		if(kDirective.m_ePrimaryStrategy != PRIMARY_STRATEGY_MILITARY)

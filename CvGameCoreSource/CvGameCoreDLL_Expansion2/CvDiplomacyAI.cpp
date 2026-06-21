@@ -5393,6 +5393,32 @@ void CvDiplomacyAI::ChangeWantPeaceCounter(PlayerTypes ePlayer, int iChange)
 
 
 
+//MOD: let militaristic expansion commit a dominant army to a plausible offensive
+static bool ShouldMilitaristicExpansionPrepareAttack(CvDiplomacyAI* pDiplomacyAI, CvPlayer* pPlayer, PlayerTypes eTargetPlayer)
+{
+	if(pDiplomacyAI == NULL || pPlayer == NULL || !pDiplomacyAI->IsPlayerValid(eTargetPlayer) || GET_PLAYER(eTargetPlayer).isMinorCiv())
+	{
+		return false;
+	}
+
+	const StrategyState& kState = pPlayer->GetGrandStrategyAI()->GetStrategyState();
+	if(kState.m_kDirective.m_ePrimaryStrategy != PRIMARY_STRATEGY_MILITARISTIC_EXPANSION)
+	{
+		return false;
+	}
+
+	if(kState.m_kSummary.m_iMilitaryPercentOfRelevantAverage < StrategyDirectiveAIConstants::MILITARISTIC_EXPANSION_ATTACK_RELEVANT_PERCENT)
+	{
+		return false;
+	}
+
+	const MajorCivApproachTypes eApproach = pDiplomacyAI->GetMajorCivApproach(eTargetPlayer, false);
+	const DisputeLevelTypes eLandDispute = pDiplomacyAI->GetLandDisputeLevel(eTargetPlayer);
+	const ThreatTypes eMilitaryThreat = pDiplomacyAI->GetMilitaryThreat(eTargetPlayer);
+	return eApproach == MAJOR_CIV_APPROACH_WAR || eApproach == MAJOR_CIV_APPROACH_HOSTILE || eLandDispute >= DISPUTE_LEVEL_STRONG || eMilitaryThreat >= THREAT_MAJOR;
+}
+//END MOD
+
 /// Handles declarations of War for this AI
 void CvDiplomacyAI::DoMakeWarOnPlayer(PlayerTypes eTargetPlayer)
 {
@@ -5422,6 +5448,12 @@ void CvDiplomacyAI::DoMakeWarOnPlayer(PlayerTypes eTargetPlayer)
 	{
 		MajorCivApproachTypes eApproach = GetMajorCivApproach(eTargetPlayer, /*bHideTrueFeelings*/ false);
 		bWantToAttack = (eApproach == MAJOR_CIV_APPROACH_WAR || (eApproach == MAJOR_CIV_APPROACH_DECEPTIVE && IsGoingForWorldConquest()));
+		//MOD: translate a dominant militaristic expansion posture into offensive preparation against plausible targets
+		if(!bWantToAttack && ShouldMilitaristicExpansionPrepareAttack(this, m_pPlayer, eTargetPlayer))
+		{
+			bWantToAttack = true;
+		}
+		//END MOD
 		bWantToAttack = bWantToAttack && !bAtWarWithAtLeastOneMajor; // let's not get into another war right now
 		pOperation = GetPlayer()->GetMilitaryAI()->GetSneakAttackOperation(eTargetPlayer);
 	}

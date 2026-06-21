@@ -187,7 +187,9 @@ namespace
 			return iWeight;
 		}
 
-		const StrategyDirective kDirective = pPlayer->GetGrandStrategyAI()->BuildStrategyDirective();
+		const StrategyState& kState = pPlayer->GetGrandStrategyAI()->GetStrategyState();
+
+		const StrategyDirective& kDirective = kState.m_kDirective;
 		if(kDirective.m_iMilitaryThreatSeverity >= StrategyDirectiveAIConstants::MILITARY_THREAT_HIGH)
 		{
 			return max(1, (iWeight * StrategyDirectiveAIConstants::EXPANSION_WONDER_PERCENT) / 100);

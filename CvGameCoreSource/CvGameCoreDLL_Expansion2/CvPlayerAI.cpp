@@ -61,59 +61,6 @@ static bool IsExperimentSettlePlotWithinCityRange(const CvPlayerAI* pPlayer, con
 	return !bHasCity;
 }
 
-static BuildingTypes GetExperimentBuildingForClass(CvPlayerAI* pPlayer, const char* szBuildingClass)
-{
-	const int iBuildingClass = GC.getInfoTypeForString(szBuildingClass, true);
-	if(pPlayer == NULL || iBuildingClass == -1)
-	{
-		return NO_BUILDING;
-	}
-
-	return (BuildingTypes)pPlayer->getCivilizationInfo().getCivilizationBuildings(iBuildingClass);
-}
-
-static bool IsExperimentNationalCollegePendingForSettling(CvPlayerAI* pPlayer)
-{
-	if(pPlayer == NULL || !ShouldUseStrategyDirectiveAI(pPlayer->GetID()) || GC.getGame().getGameTurn() <= StrategyDirectiveAIConstants::NC_SETTLE_SITE_VALUE_SUPPRESSION_TURN)
-	{
-		return false;
-	}
-
-	CvCity* pCapital = pPlayer->getCapitalCity();
-	if(pCapital == NULL)
-	{
-		return false;
-	}
-
-	const BuildingTypes eNationalCollege = GetExperimentBuildingForClass(pPlayer, "BUILDINGCLASS_NATIONAL_COLLEGE");
-	if(eNationalCollege == NO_BUILDING || pCapital->GetCityBuildings()->GetNumBuilding(eNationalCollege) > 0)
-	{
-		return false;
-	}
-
-	if(pCapital->getFirstBuildingOrder(eNationalCollege) != -1 || pCapital->canConstruct(eNationalCollege))
-	{
-		return true;
-	}
-
-	const BuildingTypes eLibrary = GetExperimentBuildingForClass(pPlayer, "BUILDINGCLASS_LIBRARY");
-	if(eLibrary == NO_BUILDING)
-	{
-		return false;
-	}
-
-	int iLoop = 0;
-	for(CvCity* pLoopCity = pPlayer->firstCity(&iLoop); pLoopCity != NULL; pLoopCity = pPlayer->nextCity(&iLoop))
-	{
-		if(!pLoopCity->IsPuppet() && pLoopCity->GetCityBuildings()->GetNumBuilding(eLibrary) == 0 && (pLoopCity->canConstruct(eLibrary) || pLoopCity->getFirstBuildingOrder(eLibrary) != -1))
-		{
-			return true;
-		}
-	}
-
-	return false;
-}
-
 static bool IsExperimentNationalCollegeBuilt(CvPlayerAI* pPlayer)
 {
 	if(pPlayer == NULL)
@@ -121,14 +68,122 @@ static bool IsExperimentNationalCollegeBuilt(CvPlayerAI* pPlayer)
 		return false;
 	}
 
-	CvCity* pCapital = pPlayer->getCapitalCity();
-	if(pCapital == NULL)
+	const StrategyState& kState = pPlayer->GetGrandStrategyAI()->GetStrategyState();
+
+	return kState.m_eNationalCollegeStatus == NC_STATUS_COMPLETED;
+}
+
+static int GetExperimentContestedSettleBonus(CvPlayerAI* pPlayer, CvPlot* pPlot, int iBaseValue)
+{
+	if(pPlayer == NULL || pPlot == NULL || iBaseValue < GC.getAI_STRATEGY_MINIMUM_SETTLE_FERTILITY() || !ShouldUseStrategyDirectiveAI(pPlayer->GetID()))
 	{
-		return false;
+		return 0;
 	}
 
-	const BuildingTypes eNationalCollege = GetExperimentBuildingForClass(pPlayer, "BUILDINGCLASS_NATIONAL_COLLEGE");
-	return eNationalCollege != NO_BUILDING && pCapital->GetCityBuildings()->GetNumBuilding(eNationalCollege) > 0;
+	const StrategyState& kState = pPlayer->GetGrandStrategyAI()->GetStrategyState();
+	const StrategyDirective& kDirective = kState.m_kDirective;
+	if(kDirective.m_bAtWar || kDirective.m_bLowHappiness || kDirective.m_bGoldCritical || kDirective.m_iMilitaryThreatSeverity >= StrategyDirectiveAIConstants::MILITARY_THREAT_MODERATE)
+	{
+		return 0;
+	}
+
+	CvDiplomacyAI* pDiploAI = pPlayer->GetDiplomacyAI();
+	if(pDiploAI == NULL)
+	{
+		return 0;
+	}
+
+	const TeamTypes eTeam = pPlayer->getTeam();
+	int iBestPressure = 0;
+	for(int iPlayerLoop = 0; iPlayerLoop < MAX_MAJOR_CIVS; iPlayerLoop++)
+	{
+		const PlayerTypes eOtherPlayer = (PlayerTypes)iPlayerLoop;
+		if(eOtherPlayer == pPlayer->GetID())
+		{
+			continue;
+		}
+
+		CvPlayer& kOtherPlayer = GET_PLAYER(eOtherPlayer);
+		if(!kOtherPlayer.isAlive() || kOtherPlayer.isMinorCiv() || kOtherPlayer.isBarbarian() || kOtherPlayer.getTeam() == eTeam || !GET_TEAM(eTeam).isHasMet(kOtherPlayer.getTeam()))
+		{
+			continue;
+		}
+
+		int iRivalPressure = 0;
+		const PlayerProximityTypes eProximity = pPlayer->GetProximityToPlayer(eOtherPlayer);
+		if(eProximity == PLAYER_PROXIMITY_NEIGHBORS)
+		{
+			iRivalPressure += 4;
+		}
+		else if(eProximity == PLAYER_PROXIMITY_CLOSE)
+		{
+			iRivalPressure += 2;
+		}
+
+		const DisputeLevelTypes eLandDispute = pDiploAI->GetLandDisputeLevel(eOtherPlayer);
+		if(eLandDispute >= DISPUTE_LEVEL_STRONG)
+		{
+			iRivalPressure += 3;
+		}
+		else if(eLandDispute >= DISPUTE_LEVEL_WEAK)
+		{
+			iRivalPressure += 1;
+		}
+
+		const MajorCivApproachTypes eApproach = pDiploAI->GetMajorCivApproach(eOtherPlayer, false);
+		if(eApproach == MAJOR_CIV_APPROACH_WAR || eApproach == MAJOR_CIV_APPROACH_HOSTILE || eApproach == MAJOR_CIV_APPROACH_GUARDED)
+		{
+			iRivalPressure += 1;
+		}
+
+		int iClosestOwnedPlotDistance = MAX_INT;
+		int iClosestCityDistance = MAX_INT;
+		for(int iDX = -6; iDX <= 6; iDX++)
+		{
+			for(int iDY = -6; iDY <= 6; iDY++)
+			{
+				CvPlot* pLoopPlot = plotXYWithRangeCheck(pPlot->getX(), pPlot->getY(), iDX, iDY, 6);
+				if(pLoopPlot == NULL)
+				{
+					continue;
+				}
+
+				const int iDistance = plotDistance(pPlot->getX(), pPlot->getY(), pLoopPlot->getX(), pLoopPlot->getY());
+				if(pLoopPlot->getOwner() == eOtherPlayer && iDistance < iClosestOwnedPlotDistance)
+				{
+					iClosestOwnedPlotDistance = iDistance;
+				}
+
+				if(pLoopPlot->isCity() && pLoopPlot->getOwner() == eOtherPlayer && iDistance < iClosestCityDistance)
+				{
+					iClosestCityDistance = iDistance;
+				}
+			}
+		}
+
+		if(iClosestOwnedPlotDistance >= 2 && iClosestOwnedPlotDistance <= 5)
+		{
+			iRivalPressure += 6 - iClosestOwnedPlotDistance;
+		}
+		if(iClosestCityDistance >= 4 && iClosestCityDistance <= 6)
+		{
+			iRivalPressure += 7 - iClosestCityDistance;
+		}
+
+		if(iRivalPressure > iBestPressure)
+		{
+			iBestPressure = iRivalPressure;
+		}
+	}
+
+	if(iBestPressure <= 0)
+	{
+		return 0;
+	}
+
+	//MOD: contested major-civ land should be strong enough to move settle-site rankings, not just break ties.
+	const int iPercentBonus = min(35, 10 + (iBestPressure * 3));
+	return min(iBaseValue / 3, (iBaseValue * iPercentBonus) / 100);
 }
 
 static TechTypes GetExperimentNationalCollegePathTech(CvPlayerAI* pPlayer)
@@ -317,7 +372,8 @@ void CvPlayerAI::AI_updateFoundValues(bool bStartingLoc)
 
 			if (pLoopPlot->isRevealed(eTeam))
 			{
-				const int iValue = GC.getGame().GetSettlerSiteEvaluator()->PlotFoundValue(pLoopPlot, this, NO_YIELD, false);
+				const int iBaseValue = GC.getGame().GetSettlerSiteEvaluator()->PlotFoundValue(pLoopPlot, this, NO_YIELD, false);
+				const int iValue = iBaseValue + GetExperimentContestedSettleBonus(this, pLoopPlot, iBaseValue);
 				pLoopPlot->setFoundValue(eID, iValue);
 				if (iValue >= iGoodEnoughToBeWorthOurTime)
 				{
@@ -529,12 +585,6 @@ int CvPlayerAI::AI_foundValue(int iX, int iY, int, bool bStartingLoc)
 	}
 	else
 	{
-		//MOD: do not value new city sites while National College is pending
-		if(IsExperimentNationalCollegePendingForSettling(this))
-		{
-			return 0;
-		}
-
 		//MOD: do not let remote settle plots look attractive to the experiment player
 		if(!IsExperimentSettlePlotWithinCityRange(this, pPlot))
 		{

@@ -12,6 +12,8 @@
 #include "CvDiplomacyAI.h"
 #include "CvMinorCivAI.h"
 #include "CvMilitaryAI.h"
+#include "CvAIOperation.h"
+#include "CvArmyAI.h"
 #include "CvGameCoreUtils.h"
 #include "CvInternalGameCoreUtils.h"
 #include "ICvDLLUserInterface.h"
@@ -21,6 +23,9 @@
 
 namespace
 {
+	void AppendExperimentAnalysisLog(CvString& strHeader, CvString& strLog, const char* szHeaderValue, const char* szValue);
+	void AppendExperimentAnalysisLog(CvString& strHeader, CvString& strLog, const char* szHeaderValue, int iValue);
+
 	//MOD: diagnostic string helpers
 	const char* GetPrimaryStrategyDirectiveName(StrategyDirectivePrimaryTypes ePrimaryStrategy)
 	{
@@ -44,6 +49,111 @@ namespace
 		}
 	}
 
+	//MOD: diagnostics for stalled war preparation and operation launch state
+	CvAIOperation* GetExperimentWarPrepOperation(CvPlayer* pPlayer, CvDiplomacyAI* pDiploAI, PlayerTypes eRival, const char** pszOperationSource)
+	{
+		if(pszOperationSource != NULL)
+		{
+			*pszOperationSource = "NONE";
+		}
+
+		if(pPlayer == NULL || pDiploAI == NULL || pPlayer->GetMilitaryAI() == NULL)
+		{
+			return NULL;
+		}
+
+		CvAIOperation* pOperation = NULL;
+		if(pDiploAI->GetWarGoal(eRival) == WAR_GOAL_DEMAND)
+		{
+			pOperation = pPlayer->GetMilitaryAI()->GetShowOfForceOperation(eRival);
+			if(pOperation != NULL && pszOperationSource != NULL)
+			{
+				*pszOperationSource = "SHOW_OF_FORCE";
+			}
+		}
+		else
+		{
+			pOperation = pPlayer->GetMilitaryAI()->GetSneakAttackOperation(eRival);
+			if(pOperation != NULL && pszOperationSource != NULL)
+			{
+				*pszOperationSource = "SNEAK_ATTACK";
+			}
+		}
+
+		return pOperation;
+	}
+
+	void AppendExperimentWarPrepDiagnostics(CvString& strHeader, CvString& strLog, CvPlayer* pPlayer, CvDiplomacyAI* pDiploAI, PlayerTypes eRival)
+	{
+		const char* szOperationSource = "NONE";
+		CvAIOperation* pOperation = GetExperimentWarPrepOperation(pPlayer, pDiploAI, eRival, &szOperationSource);
+		CvArmyAI* pArmy = NULL;
+		CvPlot* pMusterPlot = NULL;
+		CvPlot* pTargetPlot = NULL;
+		CvPlot* pArmyPlot = NULL;
+		int iArmyID = -1;
+
+		if(pOperation != NULL)
+		{
+			iArmyID = pOperation->GetFirstArmyID();
+			pMusterPlot = pOperation->GetMusterPlot();
+			pTargetPlot = pOperation->GetTargetPlot();
+
+			if(iArmyID != -1 && pPlayer != NULL)
+			{
+				pArmy = pPlayer->getArmyAI(iArmyID);
+				if(pArmy != NULL)
+				{
+					pArmyPlot = pArmy->Plot();
+				}
+			}
+		}
+
+		AppendExperimentAnalysisLog(strHeader, strLog, "WarPrepMustering", pDiploAI != NULL && pDiploAI->IsMusteringForAttack(eRival) ? 1 : 0);
+		AppendExperimentAnalysisLog(strHeader, strLog, "WarPrepOperationSource", szOperationSource);
+		AppendExperimentAnalysisLog(strHeader, strLog, "WarPrepOperationType", pOperation != NULL ? pOperation->GetOperationType() : -1);
+		AppendExperimentAnalysisLog(strHeader, strLog, "WarPrepOperationState", pOperation != NULL ? (int)pOperation->GetOperationState() : -1);
+		AppendExperimentAnalysisLog(strHeader, strLog, "WarPrepProgressPct", pOperation != NULL ? pOperation->PercentFromMusterPointToTarget() : -1);
+		AppendExperimentAnalysisLog(strHeader, strLog, "WarPrepArmyID", iArmyID);
+		AppendExperimentAnalysisLog(strHeader, strLog, "WarPrepArmyState", pArmy != NULL ? (int)pArmy->GetArmyAIState() : -1);
+		AppendExperimentAnalysisLog(strHeader, strLog, "WarPrepArmySlotsFilled", pArmy != NULL ? pArmy->GetNumSlotsFilled() : -1);
+		AppendExperimentAnalysisLog(strHeader, strLog, "WarPrepArmySlotsTotal", pArmy != NULL ? pArmy->GetNumFormationEntries() : -1);
+		AppendExperimentAnalysisLog(strHeader, strLog, "WarPrepUnitsNeededToBuild", pOperation != NULL ? (int)pOperation->GetNumUnitsNeededToBeBuilt() : -1);
+		AppendExperimentAnalysisLog(strHeader, strLog, "WarPrepMusterX", pMusterPlot != NULL ? pMusterPlot->getX() : -1);
+		AppendExperimentAnalysisLog(strHeader, strLog, "WarPrepMusterY", pMusterPlot != NULL ? pMusterPlot->getY() : -1);
+		AppendExperimentAnalysisLog(strHeader, strLog, "WarPrepTargetX", pTargetPlot != NULL ? pTargetPlot->getX() : -1);
+		AppendExperimentAnalysisLog(strHeader, strLog, "WarPrepTargetY", pTargetPlot != NULL ? pTargetPlot->getY() : -1);
+		AppendExperimentAnalysisLog(strHeader, strLog, "WarPrepArmyX", pArmyPlot != NULL ? pArmyPlot->getX() : -1);
+		AppendExperimentAnalysisLog(strHeader, strLog, "WarPrepArmyY", pArmyPlot != NULL ? pArmyPlot->getY() : -1);
+	}
+
+	void AppendExperimentSneakRequestDiagnostics(CvString& strHeader, CvString& strLog, CvPlayer* pPlayer, PlayerTypes eRival)
+	{
+		CvMilitaryAI* pMilitaryAI = pPlayer != NULL ? pPlayer->GetMilitaryAI() : NULL;
+		const CvMilitarySneakAttackRequestLog* pRequestLog = pMilitaryAI != NULL ? &pMilitaryAI->GetLastSneakAttackRequestLog() : NULL;
+		const bool bMatchesRival = pRequestLog != NULL && pRequestLog->m_iTargetPlayer == eRival;
+
+		AppendExperimentAnalysisLog(strHeader, strLog, "ArmyBeingBuilt", pMilitaryAI != NULL ? (int)pMilitaryAI->GetArmyBeingBuilt() : -1);
+		AppendExperimentAnalysisLog(strHeader, strLog, "SneakRequestTurn", bMatchesRival ? pRequestLog->m_iTurn : -1);
+		AppendExperimentAnalysisLog(strHeader, strLog, "SneakRequestResult", bMatchesRival ? pRequestLog->m_iResult : -1);
+		AppendExperimentAnalysisLog(strHeader, strLog, "SneakRequestOperationType", bMatchesRival ? pRequestLog->m_iOperationType : -1);
+		AppendExperimentAnalysisLog(strHeader, strLog, "SneakRequestFormation", bMatchesRival ? pRequestLog->m_iFormation : -1);
+		AppendExperimentAnalysisLog(strHeader, strLog, "SneakRequestAttackReady", bMatchesRival ? pRequestLog->m_iAttackReady : -1);
+		AppendExperimentAnalysisLog(strHeader, strLog, "SneakRequestAttackBySea", bMatchesRival ? pRequestLog->m_iAttackBySea : -1);
+		AppendExperimentAnalysisLog(strHeader, strLog, "SneakRequestSlotsFilled", bMatchesRival ? pRequestLog->m_iFilledSlots : -1);
+		AppendExperimentAnalysisLog(strHeader, strLog, "SneakRequestSlotsRequired", bMatchesRival ? pRequestLog->m_iRequiredSlots : -1);
+		AppendExperimentAnalysisLog(strHeader, strLog, "SneakRequestLandReservesUsed", bMatchesRival ? pRequestLog->m_iLandReservesUsed : -1);
+		AppendExperimentAnalysisLog(strHeader, strLog, "SneakRequestLandReservesAvailable", bMatchesRival ? pRequestLog->m_iLandReservesAvailable : -1);
+		AppendExperimentAnalysisLog(strHeader, strLog, "SneakRequestLandRequests", bMatchesRival ? pRequestLog->m_iLandAttacksRequested : -1);
+		AppendExperimentAnalysisLog(strHeader, strLog, "SneakRequestNavalRequests", bMatchesRival ? pRequestLog->m_iNavalAttacksRequested : -1);
+		AppendExperimentAnalysisLog(strHeader, strLog, "SneakRequestArmyType", bMatchesRival ? pRequestLog->m_iArmyTypeBeingBuilt : -1);
+		AppendExperimentAnalysisLog(strHeader, strLog, "SneakRequestTargetX", bMatchesRival ? pRequestLog->m_iTargetX : -1);
+		AppendExperimentAnalysisLog(strHeader, strLog, "SneakRequestTargetY", bMatchesRival ? pRequestLog->m_iTargetY : -1);
+		AppendExperimentAnalysisLog(strHeader, strLog, "SneakRequestMusterX", bMatchesRival ? pRequestLog->m_iMusterX : -1);
+		AppendExperimentAnalysisLog(strHeader, strLog, "SneakRequestMusterY", bMatchesRival ? pRequestLog->m_iMusterY : -1);
+		AppendExperimentAnalysisLog(strHeader, strLog, "SneakRequestPathLength", bMatchesRival ? pRequestLog->m_iPathLength : -1);
+	}
+	//END MOD
 	const char* GetCityFocusTypeName(CityAIFocusTypes eFocusType)
 	{
 		switch(eFocusType)
@@ -74,10 +184,10 @@ namespace
 	//MOD: production policy defaults emitted through StrategyDirective
 	const int AI_EXPERIMENT_WORKER_BASE_WEIGHT_BONUS = 700;
 	const int AI_EXPERIMENT_WORKER_DEFICIT_WEIGHT_BONUS = 200;
-	const int AI_EXPERIMENT_EXPANSION_SETTLER_WEIGHT_BONUS = 7000	;
-	const int AI_EXPERIMENT_IMMINENT_BARB_CITY_RANGE = 5;
+	const int AI_EXPERIMENT_EXPANSION_SETTLER_WEIGHT_BONUS = 7000;
+	const int AI_EXPERIMENT_IMMINENT_BARB_CITY_RANGE = 4;
 	const int AI_EXPERIMENT_IMMINENT_BARB_CIVILIAN_RANGE = 4;
-	const int AI_EXPERIMENT_BARB_RESPONSE_MILITARY_PER_BARB = 2;
+	const int AI_EXPERIMENT_BARB_RESPONSE_MILITARY_PER_BARB = 1;
 	const int AI_EXPERIMENT_IMMINENT_MAJOR_CITY_RANGE = 6;
 	const int AI_EXPERIMENT_IMMINENT_MAJOR_CIVILIAN_RANGE = 4;
 	const int AI_EXPERIMENT_MAJOR_RESPONSE_MILITARY_PER_UNIT = 1;
@@ -166,6 +276,28 @@ namespace
 
 		return iCount;
 	}
+
+	int CountExperimentOwnedUniqueLuxuryResources(CvPlayer* pPlayer)
+	{
+		if(pPlayer == NULL || !ShouldUseStrategyDirectiveAI(pPlayer->GetID()))
+		{
+			return 0;
+		}
+
+		int iCount = 0;
+		for(int iResourceLoop = 0; iResourceLoop < GC.getNumResourceInfos(); iResourceLoop++)
+		{
+			const ResourceTypes eResource = (ResourceTypes)iResourceLoop;
+			CvResourceInfo* pkResourceInfo = GC.getResourceInfo(eResource);
+			if(pkResourceInfo != NULL && pkResourceInfo->getResourceUsage() == RESOURCEUSAGE_LUXURY && pPlayer->getNumResourceTotal(eResource, false) > 0)
+			{
+				iCount++;
+			}
+		}
+
+		return iCount;
+	}
+
 	int CountExperimentVisibleBarbarianCombatUnitsNearPlot(CvPlayer* pPlayer, CvPlot* pAnchorPlot, int iRange)
 	{
 		if(pPlayer == NULL || pAnchorPlot == NULL || !GET_PLAYER(BARBARIAN_PLAYER).isAlive())
@@ -364,6 +496,27 @@ namespace
 		}
 
 		return false;
+	}
+	//MOD: When the empire is already far ahead militarily, only local under-defense should keep driving military posture.
+	bool IsExperimentMostThreatenedCityLocallyUnderguarded(CvPlayer* pPlayer)
+	{
+		if(pPlayer == NULL || pPlayer->GetMilitaryAI() == NULL)
+		{
+			return false;
+		}
+
+		CvCity* pThreatenedCity = pPlayer->GetMilitaryAI()->GetMostThreatenedCity();
+		if(pThreatenedCity == NULL || pThreatenedCity->plot() == NULL)
+		{
+			return false;
+		}
+
+		if(IsExperimentUnderguardedMajorThreatAtPlot(pPlayer, pThreatenedCity->plot(), AI_EXPERIMENT_IMMINENT_MAJOR_CITY_RANGE, 1))
+		{
+			return true;
+		}
+
+		return IsExperimentUnderguardedBarbarianThreatAtPlot(pPlayer, pThreatenedCity->plot(), AI_EXPERIMENT_IMMINENT_BARB_CITY_RANGE);
 	}
 	bool IsExperimentImminentBarbarianThreat(CvPlayer* pPlayer)
 	{
@@ -571,6 +724,68 @@ namespace
 			}
 		}
 		return false;
+	}
+
+	//MOD: shared factual National College status for the strategy state
+	NationalCollegeStatus GetExperimentNationalCollegeStatus(CvPlayer* pPlayer)
+	{
+		if(pPlayer == NULL || !ShouldUseStrategyDirectiveAI(pPlayer->GetID()))
+		{
+			return NC_STATUS_NOT_RELEVANT;
+		}
+
+		const BuildingTypes eNationalCollege = GetExperimentBuildingForClass(pPlayer, "BUILDINGCLASS_NATIONAL_COLLEGE");
+		if(eNationalCollege == NO_BUILDING)
+		{
+			return NC_STATUS_NOT_RELEVANT;
+		}
+
+		if(IsExperimentBuildingBuilt(*pPlayer, eNationalCollege))
+		{
+			return NC_STATUS_COMPLETED;
+		}
+
+		bool bCanBuildNationalCollege = false;
+		int iCityLoop = 0;
+		for(CvCity* pLoopCity = pPlayer->firstCity(&iCityLoop); pLoopCity != NULL; pLoopCity = pPlayer->nextCity(&iCityLoop))
+		{
+			if(pLoopCity->IsPuppet())
+			{
+				continue;
+			}
+
+			if(pLoopCity->getFirstBuildingOrder(eNationalCollege) != -1)
+			{
+				return NC_STATUS_QUEUED;
+			}
+
+			if(pLoopCity->canConstruct(eNationalCollege))
+			{
+				bCanBuildNationalCollege = true;
+			}
+		}
+
+		if(bCanBuildNationalCollege)
+		{
+			return NC_STATUS_READY_TO_BUILD;
+		}
+
+		const BuildingTypes eLibrary = GetExperimentBuildingForClass(pPlayer, "BUILDINGCLASS_LIBRARY");
+		if(eLibrary == NO_BUILDING)
+		{
+			return NC_STATUS_NOT_RELEVANT;
+		}
+
+		iCityLoop = 0;
+		for(CvCity* pLoopCity = pPlayer->firstCity(&iCityLoop); pLoopCity != NULL; pLoopCity = pPlayer->nextCity(&iCityLoop))
+		{
+			if(!pLoopCity->IsPuppet() && pLoopCity->GetCityBuildings()->GetNumBuilding(eLibrary) == 0 && (pLoopCity->canConstruct(eLibrary) || pLoopCity->getFirstBuildingOrder(eLibrary) != -1))
+			{
+				return NC_STATUS_WAITING_FOR_LIBRARIES;
+			}
+		}
+
+		return NC_STATUS_NOT_RELEVANT;
 	}
 
 	bool IsExperimentLandCombatUnitEntry(CvUnitEntry* pkUnitInfo)
@@ -1100,6 +1315,143 @@ namespace
 			pLog->Msg(strLog);
 		}
 	}
+	void LogExperimentCodexDiagnostics(CvPlayer* pPlayer, const GameStateSummary& kSummary, const StrategyDirective& kDirective)
+	{
+		if(pPlayer == NULL || !ShouldUseStrategyDirectiveAI(pPlayer->GetID()) || pPlayer->GetDiplomacyAI() == NULL)
+		{
+			return;
+		}
+
+		CvString strHeader;
+		CvString strLogName;
+		CvString playerName = pPlayer->getCivilizationShortDescription();
+
+		if(GC.getPlayerAndCityAILogSplit())
+		{
+			strLogName = "StrategyDirectiveAI_CodexDiagnostics_" + playerName + ".csv";
+		}
+		else
+		{
+			strLogName = "StrategyDirectiveAI_CodexDiagnostics.csv";
+		}
+
+		int iScienceRank = 0;
+		int iScienceLeader = -1;
+		int iScienceAverage = 0;
+		int iCulturePTRank = 0;
+		int iCulturePTLeader = -1;
+		int iCulturePTAverage = 0;
+		int iLifetimeCultureRank = 0;
+		int iLifetimeCultureLeader = -1;
+		int iLifetimeCultureAverage = 0;
+		int iPoliciesRank = 0;
+		int iPoliciesLeader = -1;
+		int iPoliciesAverage = 0;
+		int iProductionRank = 0;
+		int iProductionLeader = -1;
+		int iProductionAverage = 0;
+		int iMilitaryRank = 0;
+		int iMilitaryLeader = -1;
+		int iMilitaryAverage = 0;
+
+		GetExperimentAnalysisMetricComparison(*pPlayer, EXPERIMENT_ANALYSIS_SCIENCE, iScienceRank, iScienceLeader, iScienceAverage);
+		GetExperimentAnalysisMetricComparison(*pPlayer, EXPERIMENT_ANALYSIS_CULTURE_PER_TURN, iCulturePTRank, iCulturePTLeader, iCulturePTAverage);
+		GetExperimentAnalysisMetricComparison(*pPlayer, EXPERIMENT_ANALYSIS_LIFETIME_CULTURE, iLifetimeCultureRank, iLifetimeCultureLeader, iLifetimeCultureAverage);
+		GetExperimentAnalysisMetricComparison(*pPlayer, EXPERIMENT_ANALYSIS_POLICIES, iPoliciesRank, iPoliciesLeader, iPoliciesAverage);
+		GetExperimentAnalysisMetricComparison(*pPlayer, EXPERIMENT_ANALYSIS_PRODUCTION, iProductionRank, iProductionLeader, iProductionAverage);
+		GetExperimentAnalysisMetricComparison(*pPlayer, EXPERIMENT_ANALYSIS_MILITARY, iMilitaryRank, iMilitaryLeader, iMilitaryAverage);
+
+		ExperimentProductionCategoryCounts kProductionCounts;
+		CountExperimentProductionCategories(*pPlayer, kProductionCounts);
+		strHeader = "Turn,Player,Primary,AtWarCount,Gold,GPTx100,Happiness,Science,ScienceRank,CulturePT,CulturePTRank,LifetimeCulture,LifetimeCultureRank,Policies,PoliciesRank,Production,ProductionRank,Military,MilitaryRank,NonPuppetCities,Population,CitiesProducingCultureBuilding,CitiesProducingProcess,RivalID,RivalName,Met,AtWar,CanDeclareWar,TurnsLockedIntoWar,Approach,VisibleApproach,WarGoal,WarState,WarProjection,WarPrepMustering,WarPrepOperationSource,WarPrepOperationType,WarPrepOperationState,WarPrepProgressPct,WarPrepArmyID,WarPrepArmyState,WarPrepArmySlotsFilled,WarPrepArmySlotsTotal,WarPrepUnitsNeededToBuild,WarPrepMusterX,WarPrepMusterY,WarPrepTargetX,WarPrepTargetY,WarPrepArmyX,WarPrepArmyY,ArmyBeingBuilt,SneakRequestTurn,SneakRequestResult,SneakRequestOperationType,SneakRequestFormation,SneakRequestAttackReady,SneakRequestAttackBySea,SneakRequestSlotsFilled,SneakRequestSlotsRequired,SneakRequestLandReservesUsed,SneakRequestLandReservesAvailable,SneakRequestLandRequests,SneakRequestNavalRequests,SneakRequestArmyType,SneakRequestTargetX,SneakRequestTargetY,SneakRequestMusterX,SneakRequestMusterY,SneakRequestPathLength,MilitaryThreat,WarmongerThreat,LandDispute,VictoryDispute,Proximity,RivalScore,RivalScience,RivalTechs,RivalCulturePT,RivalLifetimeCulture,RivalPolicies,RivalProduction,RivalMilitary,RivalCities,RivalPopulation,OurMilitaryPctRival,OurScorePctRival";
+
+		CvTeam& kTeam = GET_TEAM(pPlayer->getTeam());
+		CvDiplomacyAI* pDiploAI = pPlayer->GetDiplomacyAI();
+		for(int iPlayerLoop = 0; iPlayerLoop < MAX_MAJOR_CIVS; iPlayerLoop++)
+		{
+			PlayerTypes eRival = (PlayerTypes)iPlayerLoop;
+			if(eRival == pPlayer->GetID())
+			{
+				continue;
+			}
+
+			CvPlayer& kRival = GET_PLAYER(eRival);
+			if(!kRival.isAlive() || kRival.isMinorCiv() || kRival.isBarbarian())
+			{
+				continue;
+			}
+
+			const bool bMet = kTeam.isHasMet(kRival.getTeam());
+			if(!bMet)
+			{
+				continue;
+			}
+
+			const bool bAtWar = kTeam.isAtWar(kRival.getTeam());
+			const int iRivalMilitary = std::max(1, kRival.GetMilitaryMight());
+			const int iRivalScore = std::max(1, kRival.GetScore());
+			CvString strLog;
+			CvString strRowHeader;
+			CvString rivalName = kRival.getCivilizationShortDescription();
+
+			AppendExperimentAnalysisLog(strRowHeader, strLog, "Turn", kSummary.m_iTurn);
+			AppendExperimentAnalysisLog(strRowHeader, strLog, "Player", playerName.c_str());
+			AppendExperimentAnalysisLog(strRowHeader, strLog, "Primary", GetPrimaryStrategyDirectiveName(kDirective.m_ePrimaryStrategy));
+			AppendExperimentAnalysisLog(strRowHeader, strLog, "AtWarCount", kSummary.m_iAtWarCount);
+			AppendExperimentAnalysisLog(strRowHeader, strLog, "Gold", kSummary.m_iGold);
+			AppendExperimentAnalysisLog(strRowHeader, strLog, "GPTx100", kSummary.m_iGoldPerTurnTimes100);
+			AppendExperimentAnalysisLog(strRowHeader, strLog, "Happiness", kSummary.m_iExcessHappiness);
+			AppendExperimentAnalysisLog(strRowHeader, strLog, "Science", GetExperimentAnalysisMetric(*pPlayer, EXPERIMENT_ANALYSIS_SCIENCE));
+			AppendExperimentAnalysisLog(strRowHeader, strLog, "ScienceRank", iScienceRank);
+			AppendExperimentAnalysisLog(strRowHeader, strLog, "CulturePT", GetExperimentAnalysisMetric(*pPlayer, EXPERIMENT_ANALYSIS_CULTURE_PER_TURN));
+			AppendExperimentAnalysisLog(strRowHeader, strLog, "CulturePTRank", iCulturePTRank);
+			AppendExperimentAnalysisLog(strRowHeader, strLog, "LifetimeCulture", GetExperimentAnalysisMetric(*pPlayer, EXPERIMENT_ANALYSIS_LIFETIME_CULTURE));
+			AppendExperimentAnalysisLog(strRowHeader, strLog, "LifetimeCultureRank", iLifetimeCultureRank);
+			AppendExperimentAnalysisLog(strRowHeader, strLog, "Policies", GetExperimentAnalysisMetric(*pPlayer, EXPERIMENT_ANALYSIS_POLICIES));
+			AppendExperimentAnalysisLog(strRowHeader, strLog, "PoliciesRank", iPoliciesRank);
+			AppendExperimentAnalysisLog(strRowHeader, strLog, "Production", GetExperimentAnalysisMetric(*pPlayer, EXPERIMENT_ANALYSIS_PRODUCTION));
+			AppendExperimentAnalysisLog(strRowHeader, strLog, "ProductionRank", iProductionRank);
+			AppendExperimentAnalysisLog(strRowHeader, strLog, "Military", GetExperimentAnalysisMetric(*pPlayer, EXPERIMENT_ANALYSIS_MILITARY));
+			AppendExperimentAnalysisLog(strRowHeader, strLog, "MilitaryRank", iMilitaryRank);
+			AppendExperimentAnalysisLog(strRowHeader, strLog, "NonPuppetCities", kSummary.m_iNonPuppetCities);
+			AppendExperimentAnalysisLog(strRowHeader, strLog, "Population", kSummary.m_iTotalPopulation);
+			AppendExperimentAnalysisLog(strRowHeader, strLog, "CitiesProducingCultureBuilding", kProductionCounts.m_iCultureBuildings);
+			AppendExperimentAnalysisLog(strRowHeader, strLog, "CitiesProducingProcess", kProductionCounts.m_iProcesses);
+			AppendExperimentAnalysisLog(strRowHeader, strLog, "RivalID", iPlayerLoop);
+			AppendExperimentAnalysisLog(strRowHeader, strLog, "RivalName", rivalName.c_str());
+			AppendExperimentAnalysisLog(strRowHeader, strLog, "Met", bMet ? 1 : 0);
+			AppendExperimentAnalysisLog(strRowHeader, strLog, "AtWar", bAtWar ? 1 : 0);
+			AppendExperimentAnalysisLog(strRowHeader, strLog, "CanDeclareWar", kTeam.canDeclareWar(kRival.getTeam()) ? 1 : 0);
+			AppendExperimentAnalysisLog(strRowHeader, strLog, "TurnsLockedIntoWar", bAtWar ? kTeam.GetNumTurnsLockedIntoWar(kRival.getTeam()) : 0);
+			AppendExperimentAnalysisLog(strRowHeader, strLog, "Approach", (int)pDiploAI->GetMajorCivApproach(eRival, false));
+			AppendExperimentAnalysisLog(strRowHeader, strLog, "VisibleApproach", (int)pDiploAI->GetMajorCivApproach(eRival, true));
+			AppendExperimentAnalysisLog(strRowHeader, strLog, "WarGoal", (int)pDiploAI->GetWarGoal(eRival));
+			AppendExperimentAnalysisLog(strRowHeader, strLog, "WarState", (int)pDiploAI->GetWarState(eRival));
+			AppendExperimentAnalysisLog(strRowHeader, strLog, "WarProjection", (int)pDiploAI->GetWarProjection(eRival));
+			AppendExperimentWarPrepDiagnostics(strRowHeader, strLog, pPlayer, pDiploAI, eRival);
+			AppendExperimentSneakRequestDiagnostics(strRowHeader, strLog, pPlayer, eRival);
+			AppendExperimentAnalysisLog(strRowHeader, strLog, "MilitaryThreat", (int)pDiploAI->GetMilitaryThreat(eRival));
+			AppendExperimentAnalysisLog(strRowHeader, strLog, "WarmongerThreat", (int)pDiploAI->GetWarmongerThreat(eRival));
+			AppendExperimentAnalysisLog(strRowHeader, strLog, "LandDispute", (int)pDiploAI->GetLandDisputeLevel(eRival));
+			AppendExperimentAnalysisLog(strRowHeader, strLog, "VictoryDispute", (int)pDiploAI->GetVictoryDisputeLevel(eRival));
+			AppendExperimentAnalysisLog(strRowHeader, strLog, "Proximity", (int)pPlayer->GetProximityToPlayer(eRival));
+			AppendExperimentAnalysisLog(strRowHeader, strLog, "RivalScore", kRival.GetScore());
+			AppendExperimentAnalysisLog(strRowHeader, strLog, "RivalScience", kRival.GetScience());
+			AppendExperimentAnalysisLog(strRowHeader, strLog, "RivalTechs", GET_TEAM(kRival.getTeam()).GetTeamTechs()->GetNumTechsKnown());
+			AppendExperimentAnalysisLog(strRowHeader, strLog, "RivalCulturePT", kRival.GetTotalJONSCulturePerTurn());
+			AppendExperimentAnalysisLog(strRowHeader, strLog, "RivalLifetimeCulture", kRival.GetJONSCultureEverGenerated());
+			AppendExperimentAnalysisLog(strRowHeader, strLog, "RivalPolicies", kRival.GetPlayerPolicies() != NULL ? kRival.GetPlayerPolicies()->GetNumPoliciesOwned() : 0);
+			AppendExperimentAnalysisLog(strRowHeader, strLog, "RivalProduction", GetExperimentTotalProduction(kRival));
+			AppendExperimentAnalysisLog(strRowHeader, strLog, "RivalMilitary", kRival.GetMilitaryMight());
+			AppendExperimentAnalysisLog(strRowHeader, strLog, "RivalCities", CountExperimentNonPuppetCities(kRival));
+			AppendExperimentAnalysisLog(strRowHeader, strLog, "RivalPopulation", kRival.getTotalPopulation());
+			AppendExperimentAnalysisLog(strRowHeader, strLog, "OurMilitaryPctRival", (pPlayer->GetMilitaryMight() * 100) / iRivalMilitary);
+			AppendExperimentAnalysisLog(strRowHeader, strLog, "OurScorePctRival", (pPlayer->GetScore() * 100) / iRivalScore);
+
+			FILogFile* pLog = LOGFILEMGR.GetLog(strLogName, FILogFile::kDontTimeStamp, strHeader);
+			pLog->Msg(strLog);
+		}
+	}
 	void LogExperimentStrategyAnalysis(CvPlayer* pPlayer, const GameStateSummary& kSummary, const StrategyDirective& kDirective)
 	{
 		if(pPlayer == NULL || !ShouldUseStrategyDirectiveAI(pPlayer->GetID()))
@@ -1142,7 +1494,7 @@ namespace
 		AppendExperimentRankMetric(strHeader, strLog, *pPlayer, "GPTx100", EXPERIMENT_ANALYSIS_GOLD_PER_TURN_TIMES_100);
 		AppendExperimentRankMetric(strHeader, strLog, *pPlayer, "Happiness", EXPERIMENT_ANALYSIS_HAPPINESS);
 
-		const int iNonPuppetCities = CountExperimentNonPuppetCities(*pPlayer);
+		const int iNonPuppetCities = kSummary.m_iNonPuppetCities;
 		const int iPopulation = std::max(1, pPlayer->getTotalPopulation());
 		const int iWorkers = pPlayer->GetNumUnitsWithUnitAI(UNITAI_WORKER, true, true) + pPlayer->GetNumUnitsWithUnitAI(UNITAI_WORKER_SEA, true, true);
 		const int iSettlers = pPlayer->GetNumUnitsWithUnitAI(UNITAI_SETTLE, true, true);
@@ -1192,6 +1544,8 @@ namespace
 		AppendExperimentAnalysisLog(strHeader, strLog, "CanConsiderExpansion", kDirective.m_bCanConsiderExpansion ? 1 : 0);
 		AppendExperimentAnalysisLog(strHeader, strLog, "BestSettleAreaCount", kSummary.m_iBestSettleAreaCount);
 		AppendExperimentAnalysisLog(strHeader, strLog, "UniqueLuxurySettleSiteCount", kSummary.m_iUniqueLuxurySettleSiteCount);
+		AppendExperimentAnalysisLog(strHeader, strLog, "OwnedUniqueLuxuryCount", kSummary.m_iOwnedUniqueLuxuryCount);
+		AppendExperimentAnalysisLog(strHeader, strLog, "UniqueLuxuryExpansionBlocked", kDirective.m_bUniqueLuxuryExpansionBlocked ? 1 : 0);
 		AppendExperimentAnalysisLog(strHeader, strLog, "EconomicEnoughExpansion", kSummary.m_bEconomicEnoughExpansion ? 1 : 0);
 		AppendExperimentAnalysisLog(strHeader, strLog, "MilitaryProductionUrgent", kDirective.m_bMilitaryProductionUrgent ? 1 : 0);
 		AppendExperimentAnalysisLog(strHeader, strLog, "BarbarianThreat", kSummary.m_bBarbarianThreat ? 1 : 0);
@@ -1233,6 +1587,7 @@ GameStateSummary::GameStateSummary() :
 	m_eEra(NO_ERA),
 	m_iNumCities(0),
 	m_iNumPuppetCities(0),
+	m_iNonPuppetCities(0),
 	m_iTotalPopulation(0),
 	m_iExcessHappiness(0),
 	m_bEmpireUnhappy(false),
@@ -1265,6 +1620,7 @@ GameStateSummary::GameStateSummary() :
 	m_iTurnsSinceSettledLastCity(-1),
 	m_iBestSettleAreaCount(0),
 	m_iUniqueLuxurySettleSiteCount(0),
+	m_iOwnedUniqueLuxuryCount(0),
 	m_iSettlersOnMap(0),
 	m_bEconomicEnoughExpansion(false),
 	m_bHasCoastalCity(false),
@@ -1280,6 +1636,7 @@ StrategyDirective::StrategyDirective() :
 	m_bExpansionTargetAvailable(false),
 	m_bExpansionRoomAvailable(false),
 	m_bCanConsiderExpansion(false),
+	m_bUniqueLuxuryExpansionBlocked(false),
 	m_bEarlyExpansionPhase(false),
 	m_bRecentExpansion(false),
 	m_bStrongExpansionWindow(false),
@@ -1297,6 +1654,12 @@ StrategyDirective::StrategyDirective() :
 	m_iSettlerWeightBonus(0),
 	m_iCapitalSettlerThresholdDelta(0),
 	m_bAllowCapitalSettlerStrategy(true)
+{
+}
+//------------------------------------------------------------------------------
+StrategyState::StrategyState() :
+	m_iTurn(-1),
+	m_eNationalCollegeStatus(NC_STATUS_NOT_RELEVANT)
 {
 }
 //END MOD
@@ -1407,8 +1770,13 @@ CvAIGrandStrategyXMLEntry* CvAIGrandStrategyXMLEntries::GetEntry(int index)
 /// Constructor
 CvGrandStrategyAI::CvGrandStrategyAI():
 	m_paiGrandStrategyPriority(NULL),
-	m_iCachedGameStateSummaryTurn(-1),
-	m_bGameStateSummaryCached(false),
+	//MOD: cached summary/directive state
+	m_iCachedStrategyStateTurn(-1),
+	m_bStrategyStateCached(false),
+	m_iMilitaryDirectiveCandidateTurns(0),
+	m_iTreasuryRecoveryCandidateTurns(0),
+	m_iStrategyDirectivePersistenceTurn(-1),
+	//END MOD
 	m_eGuessOtherPlayerActiveGrandStrategy(NULL),
 	m_eGuessOtherPlayerActiveGrandStrategyConfidence(NULL)
 {
@@ -1448,16 +1816,25 @@ void CvGrandStrategyAI::Uninit()
 	SAFE_DELETE_ARRAY(m_eGuessOtherPlayerActiveGrandStrategyConfidence);
 }
 
+//MOD: clear cached summary/directive state when source inputs can change
+void CvGrandStrategyAI::InvalidateStrategyState()
+{
+	m_iCachedStrategyStateTurn = -1;
+	m_bStrategyStateCached = false;
+	m_kCachedStrategyState = StrategyState();
+}
+
 /// Reset AIStrategy status array to all false
 void CvGrandStrategyAI::Reset()
 {
 	int iI;
 
 	m_iNumTurnsSinceActiveSet = 0;
-	//MOD: reset the non-serialized per-turn summary cache
-	m_iCachedGameStateSummaryTurn = -1;
-	m_bGameStateSummaryCached = false;
-	m_kCachedGameStateSummary = GameStateSummary();
+	//MOD: reset the non-serialized per-turn strategy-state cache
+	InvalidateStrategyState();
+	m_iMilitaryDirectiveCandidateTurns = 0;
+	m_iTreasuryRecoveryCandidateTurns = 0;
+	m_iStrategyDirectivePersistenceTurn = -1;
 
 	m_eActiveGrandStrategy = NO_AIGRANDSTRATEGY;
 
@@ -1482,9 +1859,10 @@ void CvGrandStrategyAI::Read(FDataStream& kStream)
 
 	kStream >> m_iNumTurnsSinceActiveSet;
 	//MOD: reconstructed after load rather than serialized
-	m_iCachedGameStateSummaryTurn = -1;
-	m_bGameStateSummaryCached = false;
-	m_kCachedGameStateSummary = GameStateSummary();
+	InvalidateStrategyState();
+	m_iMilitaryDirectiveCandidateTurns = 0;
+	m_iTreasuryRecoveryCandidateTurns = 0;
+	m_iStrategyDirectivePersistenceTurn = -1;
 	kStream >> (int&)m_eActiveGrandStrategy;
 
 	FAssertMsg(m_pAIGrandStrategies != NULL && m_pAIGrandStrategies->GetNumAIGrandStrategies() > 0, "Number of AIGrandStrategies to serialize is expected to greater than 0");
@@ -1540,7 +1918,34 @@ CvAIGrandStrategyXMLEntries* CvGrandStrategyAI::GetAIGrandStrategies()
 }
 
 //MOD: game-state summary and strategic directive selection. Builds an information snapshot for high-level strategic planning
-GameStateSummary CvGrandStrategyAI::BuildGameStateSummary()
+const StrategyState& CvGrandStrategyAI::GetStrategyState()
+{
+	if(m_pPlayer == NULL)
+	{
+		InvalidateStrategyState();
+		return m_kCachedStrategyState;
+	}
+
+	CvGame& kGame = GC.getGame();
+	if(m_bStrategyStateCached && m_iCachedStrategyStateTurn == kGame.getGameTurn())
+	{
+		return m_kCachedStrategyState;
+	}
+
+	StrategyState kStrategyState;
+	kStrategyState.m_kSummary = CreateGameStateSummary();
+	kStrategyState.m_kDirective = BuildStrategyDirective(kStrategyState.m_kSummary);
+	kStrategyState.m_eNationalCollegeStatus = GetExperimentNationalCollegeStatus(m_pPlayer);
+	kStrategyState.m_iTurn = kStrategyState.m_kSummary.m_iTurn;
+
+	m_kCachedStrategyState = kStrategyState;
+	m_iCachedStrategyStateTurn = kStrategyState.m_iTurn;
+	m_bStrategyStateCached = true;
+
+	return m_kCachedStrategyState;
+}
+
+GameStateSummary CvGrandStrategyAI::CreateGameStateSummary()
 {
 	GameStateSummary kSummary;
 
@@ -1550,17 +1955,13 @@ GameStateSummary CvGrandStrategyAI::BuildGameStateSummary()
 	}
 
 	CvGame& kGame = GC.getGame();
-	if(m_bGameStateSummaryCached && m_iCachedGameStateSummaryTurn == kGame.getGameTurn())
-	{
-		return m_kCachedGameStateSummary;
-	}
-
 	CvTeam& kTeam = GET_TEAM(m_pPlayer->getTeam());
 
 	kSummary.m_iTurn = kGame.getGameTurn();
 	kSummary.m_eEra = m_pPlayer->GetCurrentEra();
 	kSummary.m_iNumCities = m_pPlayer->getNumCities();
 	kSummary.m_iNumPuppetCities = m_pPlayer->GetNumPuppetCities();
+	kSummary.m_iNonPuppetCities = max(0, kSummary.m_iNumCities - kSummary.m_iNumPuppetCities);
 	kSummary.m_iTotalPopulation = m_pPlayer->getTotalPopulation();
 
 	kSummary.m_iExcessHappiness = m_pPlayer->GetExcessHappiness();
@@ -1674,6 +2075,7 @@ GameStateSummary CvGrandStrategyAI::BuildGameStateSummary()
 	int iSecondBestArea = -1;
 	kSummary.m_iBestSettleAreaCount = m_pPlayer->GetBestSettleAreas(m_pPlayer->GetEconomicAI()->GetMinimumSettleFertility(), iBestArea, iSecondBestArea);
 	kSummary.m_iUniqueLuxurySettleSiteCount = CountExperimentUniqueLuxurySettleSites(m_pPlayer, m_pPlayer->GetEconomicAI()->GetMinimumSettleFertility());
+	kSummary.m_iOwnedUniqueLuxuryCount = CountExperimentOwnedUniqueLuxuryResources(m_pPlayer);
 
 	EconomicAIStrategyTypes eEnoughExpansionStrategy = (EconomicAIStrategyTypes)GC.getInfoTypeForString("ECONOMICAISTRATEGY_ENOUGH_EXPANSION", true);
 	if(eEnoughExpansionStrategy != NO_ECONOMICAISTRATEGY)
@@ -1693,17 +2095,9 @@ GameStateSummary CvGrandStrategyAI::BuildGameStateSummary()
 	}
 
 	kSummary.m_eCurrentGrandStrategy = GetActiveGrandStrategy();
-	m_kCachedGameStateSummary = kSummary;
-	m_iCachedGameStateSummaryTurn = kSummary.m_iTurn;
-	m_bGameStateSummaryCached = true;
 
 	return kSummary;
 }
-StrategyDirective CvGrandStrategyAI::BuildStrategyDirective()
-{
-	return BuildStrategyDirective(BuildGameStateSummary());
-}
-
 StrategyDirective CvGrandStrategyAI::BuildStrategyDirective(const GameStateSummary& kSummary)
 {
 	StrategyDirective kDirective;
@@ -1711,14 +2105,24 @@ StrategyDirective CvGrandStrategyAI::BuildStrategyDirective(const GameStateSumma
 	const int iGoldDeficitTimes100 = (kSummary.m_iGoldPerTurnTimes100 < 0) ? -kSummary.m_iGoldPerTurnTimes100 : 0;
 	const bool bGoldFalling = (iGoldDeficitTimes100 > 0);
 	const int iScaledGoldReserve = 35 + (iEra * 75) + (kSummary.m_iNumCities * 25) + (kSummary.m_iTotalPopulation * 2);
-	const bool bGoldRunwayCritical = bGoldFalling && ((kSummary.m_iGold * 100) <= (iGoldDeficitTimes100 * 8));
-	const bool bGoldRunwayLow = bGoldFalling && ((kSummary.m_iGold * 100) <= (iGoldDeficitTimes100 * 15));
-	const bool bGoldCritical = bGoldFalling && (bGoldRunwayCritical || (kSummary.m_iGold < (iScaledGoldReserve / 3) && iGoldDeficitTimes100 >= (300 + iEra * 100)));
-	const bool bGoldLow = bGoldFalling && !bGoldCritical && kSummary.m_iGold < iScaledGoldReserve && bGoldRunwayLow;
+	const bool bEarlyGoldPhase = (kSummary.m_iTurn <= 90 && iEra <= 1);
+	//MOD: Treasury recovery should be reserved for real short-run insolvency, not every temporary low-cash dip.
+	const int iGoldRunwayCriticalTurns = bEarlyGoldPhase ? 3 : 4;
+	const int iGoldRunwayLowTurns = bEarlyGoldPhase ? 8 : 12;
+	const int iGoldReserveCriticalDivisor = bEarlyGoldPhase ? 5 : 4;
+	const int iGoldCriticalDeficitTimes100 = 700 + (iEra * 150) + (kSummary.m_iNumCities * 150);
+	const bool bGoldRunwayCritical = bGoldFalling && ((kSummary.m_iGold * 100) <= (iGoldDeficitTimes100 * iGoldRunwayCriticalTurns));
+	const bool bGoldRunwayLow = bGoldFalling && ((kSummary.m_iGold * 100) <= (iGoldDeficitTimes100 * iGoldRunwayLowTurns));
+	const bool bGoldReserveCritical = bGoldRunwayLow && kSummary.m_iGold < (iScaledGoldReserve / iGoldReserveCriticalDivisor) && iGoldDeficitTimes100 >= iGoldCriticalDeficitTimes100;
+	const bool bGoldCritical = bGoldFalling && (bGoldRunwayCritical || bGoldReserveCritical);
+	//END MOD
+	const bool bGoldLow = bGoldFalling && !bGoldCritical && kSummary.m_iGold < iScaledGoldReserve && (bGoldRunwayLow || iGoldDeficitTimes100 >= (300 + iEra * 100));
 	const bool bEarlyExpansionPhase = (kSummary.m_iTurn <= 90);
 	const bool bUniqueLuxuryExpansionOpportunity = (kSummary.m_iUniqueLuxurySettleSiteCount > 0);
-	const bool bExpansionTargetAvailable = (kSummary.m_iBestSettleAreaCount > 0 || kSummary.m_iSettlersOnMap > 0 || bUniqueLuxuryExpansionOpportunity);
-	const bool bCanConsiderExpansion = !kSummary.m_bHappinessLow && !bGoldCritical && !kSummary.m_bAtWar;
+	const bool bUniqueLuxuryShortfall = (kSummary.m_iNonPuppetCities > 0 && kSummary.m_iOwnedUniqueLuxuryCount < kSummary.m_iNonPuppetCities);
+	const bool bUniqueLuxuryExpansionBlocked = bUniqueLuxuryShortfall && !bUniqueLuxuryExpansionOpportunity;
+	const bool bExpansionTargetAvailable = !bUniqueLuxuryExpansionBlocked && (kSummary.m_iBestSettleAreaCount > 0 || kSummary.m_iSettlersOnMap > 0 || bUniqueLuxuryExpansionOpportunity);
+	const bool bCanConsiderExpansion = !bUniqueLuxuryExpansionBlocked && !kSummary.m_bHappinessLow && !bGoldCritical && !kSummary.m_bAtWar;
 	const bool bExpansionRoomAvailable = bExpansionTargetAvailable && (!kSummary.m_bEconomicEnoughExpansion || kSummary.m_iSettlersOnMap > 0 || bEarlyExpansionPhase || bUniqueLuxuryExpansionOpportunity);
 	const bool bRecentExpansion = (kSummary.m_iTurnsSinceSettledLastCity >= 0 && kSummary.m_iTurnsSinceSettledLastCity <= 25);
 	const bool bStrongExpansionWindow = bCanConsiderExpansion && bExpansionRoomAvailable && !kSummary.m_bIsCramped && (kSummary.m_iBestSettleAreaCount > 0 || bUniqueLuxuryExpansionOpportunity) && (!kSummary.m_bHappinessCaution || bEarlyExpansionPhase || bUniqueLuxuryExpansionOpportunity);
@@ -1733,15 +2137,25 @@ StrategyDirective CvGrandStrategyAI::BuildStrategyDirective(const GameStateSumma
 	const bool bRelevantMilitaryShortfall = (bMilitaryPressureExists && bBelowRelevantMilitary);
 	const bool bWorldMilitaryShortfall = (!bEarlyMilitaryComparisonPhase && bMilitaryPressureExists && bBelowWorldMilitary);
 	const bool bMilitaryAdvantage = (kSummary.m_iMilitaryPercentOfRelevantAverage >= 115 && kSummary.m_iMilitaryPercentOfWorldAverage >= 110);
+	//MOD: Do not let abstract city-threat pressure keep forcing military posture when we are already overwhelmingly ahead and locally covered.
+	const bool bOverwhelmingMilitaryAdvantage = kSummary.m_iMilitaryPercentOfWorldAverage >= StrategyDirectiveAIConstants::OVERWHELMING_MILITARY_WORLD_PERCENT && kSummary.m_iMilitaryPercentOfRelevantAverage >= StrategyDirectiveAIConstants::OVERWHELMING_MILITARY_RELEVANT_PERCENT;
+	const bool bMostThreatenedCityLocallyUnderguarded = IsExperimentMostThreatenedCityLocallyUnderguarded(m_pPlayer);
+	const bool bOverwhelmingMilitaryCanStandDown = bOverwhelmingMilitaryAdvantage && !bMostThreatenedCityLocallyUnderguarded;
+	const bool bTreasuryShouldOverrideMilitary = bGoldCritical && bOverwhelmingMilitaryCanStandDown && kSummary.m_iGold <= (iScaledGoldReserve / 4) && iGoldDeficitTimes100 >= StrategyDirectiveAIConstants::TREASURY_OVERRIDE_DEEP_DEFICIT_TIMES100;
+	//END MOD
 	const bool bEarlyBarbarianMilitaryThreat = (kSummary.m_iTurn <= 70 && kSummary.m_bBarbarianThreat);
 	const bool bMajorCityMilitaryThreat = (kSummary.m_bGeneralThreat && bPressureFromNeighbors && (bRelevantMilitaryShortfall || bWorldMilitaryShortfall));
 	const bool bWarMilitaryThreat = kSummary.m_bAtWar && (bMajorCityMilitaryThreat || bRelevantMilitaryShortfall || bWorldMilitaryShortfall);
-	const bool bImmediateMilitaryThreat = bWarMilitaryThreat || bMajorCityMilitaryThreat || bEarlyBarbarianMilitaryThreat;
-	const bool bMilitaryOpportunity = !kSummary.m_bAtWar && !bGoldCritical && kSummary.m_iStrongLandDisputeMajorCivs > 0 && bMilitaryAdvantage;
-	const bool bCityThreatCanDriveMilitary = (kSummary.m_bAtWar || kSummary.m_bBarbarianThreat || bPressureFromNeighbors);
-	const bool bModerateCityThreat = bCityThreatCanDriveMilitary && kSummary.m_iMostThreatenedCityThreat >= StrategyDirectiveAIConstants::MILITARY_THREAT_MODERATE_CITY_THREAT_VALUE;
-	const bool bCityThreatCanEscalateToHigh = bCityThreatCanDriveMilitary && (kSummary.m_bAtWar || !bMilitaryAdvantage);
-	const bool bHighCityThreat = bCityThreatCanEscalateToHigh && kSummary.m_iMostThreatenedCityThreat >= StrategyDirectiveAIConstants::MILITARY_THREAT_HIGH_CITY_THREAT_VALUE;
+	const bool bImmediateMilitaryThreat = bWarMilitaryThreat || bMajorCityMilitaryThreat;
+	//MOD: dominant armies should not wait for land disputes to become strong if diplomacy already sees war pressure.
+	const bool bDominantMilitaryOpportunity = kSummary.m_iMilitaryPercentOfRelevantAverage >= StrategyDirectiveAIConstants::MILITARISTIC_EXPANSION_ATTACK_RELEVANT_PERCENT;
+	const bool bOffensivePressureExists = kSummary.m_iStrongLandDisputeMajorCivs > 0 || kSummary.m_iWarApproachMajorCivs > 0 || kSummary.m_iHostileMajorCivs > 0 || kSummary.m_iMajorMilitaryThreatCivs > 0;
+	const bool bMilitaryOpportunity = !kSummary.m_bAtWar && !bGoldCritical && bOffensivePressureExists && ((kSummary.m_iStrongLandDisputeMajorCivs > 0 && bMilitaryAdvantage) || bDominantMilitaryOpportunity);
+	//END MOD
+	const bool bBarbarianCityThreat = kSummary.m_bBarbarianThreat && kSummary.m_iMostThreatenedCityThreat >= StrategyDirectiveAIConstants::MILITARY_THREAT_MODERATE_CITY_THREAT_VALUE;
+	const bool bMajorCityThreatCanDriveMilitary = (kSummary.m_bAtWar || bPressureFromNeighbors);
+	const bool bModerateMajorCityThreat = bMajorCityThreatCanDriveMilitary && kSummary.m_iMostThreatenedCityThreat >= StrategyDirectiveAIConstants::MILITARY_THREAT_MODERATE_CITY_THREAT_VALUE;
+	const bool bHighMajorCityThreat = bMajorCityThreatCanDriveMilitary && (kSummary.m_bAtWar || !bMilitaryAdvantage) && kSummary.m_iMostThreatenedCityThreat >= StrategyDirectiveAIConstants::MILITARY_THREAT_HIGH_CITY_THREAT_VALUE;
 	const bool bSevereRelevantMilitaryShortfall = kSummary.m_iRelevantMilitaryAverage > 0 && kSummary.m_iMilitaryPercentOfRelevantAverage < 65;
 	const bool bSevereWorldMilitaryShortfall = kSummary.m_iWorldMilitaryAverage > 0 && kSummary.m_iMilitaryPercentOfWorldAverage < 65;
 	kDirective.m_bLowHappiness = kSummary.m_bHappinessLow;
@@ -1750,6 +2164,7 @@ StrategyDirective CvGrandStrategyAI::BuildStrategyDirective(const GameStateSumma
 	kDirective.m_bExpansionTargetAvailable = bExpansionTargetAvailable;
 	kDirective.m_bExpansionRoomAvailable = bExpansionRoomAvailable;
 	kDirective.m_bCanConsiderExpansion = bCanConsiderExpansion;
+	kDirective.m_bUniqueLuxuryExpansionBlocked = bUniqueLuxuryExpansionBlocked;
 	kDirective.m_bEarlyExpansionPhase = bEarlyExpansionPhase;
 	kDirective.m_bRecentExpansion = bRecentExpansion;
 	kDirective.m_bStrongExpansionWindow = bStrongExpansionWindow;
@@ -1763,21 +2178,43 @@ StrategyDirective CvGrandStrategyAI::BuildStrategyDirective(const GameStateSumma
 	{
 		iMilitaryThreatSeverity = StrategyDirectiveAIConstants::MILITARY_THREAT_LOW;
 	}
-	if(bEarlyBarbarianMilitaryThreat || bModerateCityThreat || ((kDirective.m_bNearbyThreat || kSummary.m_bAtWar) && (bRelevantMilitaryShortfall || bWorldMilitaryShortfall)))
+	if(bEarlyBarbarianMilitaryThreat || bBarbarianCityThreat || bModerateMajorCityThreat || ((kDirective.m_bNearbyThreat || kSummary.m_bAtWar) && (bRelevantMilitaryShortfall || bWorldMilitaryShortfall)))
 	{
 		iMilitaryThreatSeverity = max(iMilitaryThreatSeverity, StrategyDirectiveAIConstants::MILITARY_THREAT_MODERATE);
 	}
-	if(bHighCityThreat || (kSummary.m_bAtWar && (bRelevantMilitaryShortfall || bWorldMilitaryShortfall) && (kSummary.m_iAtWarCount > 1 || bSevereRelevantMilitaryShortfall || bSevereWorldMilitaryShortfall || kSummary.m_bGeneralThreat)) || (bMajorCityMilitaryThreat && (bSevereRelevantMilitaryShortfall || bSevereWorldMilitaryShortfall)))
+	if(bHighMajorCityThreat || (kSummary.m_bAtWar && (bRelevantMilitaryShortfall || bWorldMilitaryShortfall) && (kSummary.m_iAtWarCount > 1 || bSevereRelevantMilitaryShortfall || bSevereWorldMilitaryShortfall || kSummary.m_bGeneralThreat)) || (bMajorCityMilitaryThreat && (bSevereRelevantMilitaryShortfall || bSevereWorldMilitaryShortfall)))
 	{
 		iMilitaryThreatSeverity = max(iMilitaryThreatSeverity, StrategyDirectiveAIConstants::MILITARY_THREAT_HIGH);
 	}
 	kDirective.m_iMilitaryThreatSeverity = iMilitaryThreatSeverity;
-	const bool bMilitaryDirectiveNeeded = iMilitaryThreatSeverity >= StrategyDirectiveAIConstants::MILITARY_THREAT_HIGH ||
-		(iMilitaryThreatSeverity >= StrategyDirectiveAIConstants::MILITARY_THREAT_MODERATE && (!bMilitaryAdvantage || kSummary.m_bAtWar || bRelevantMilitaryShortfall || bWorldMilitaryShortfall || bEarlyBarbarianMilitaryThreat));
+	const bool bMilitaryDirectiveNeededRaw = iMilitaryThreatSeverity >= StrategyDirectiveAIConstants::MILITARY_THREAT_HIGH ||
+		(iMilitaryThreatSeverity >= StrategyDirectiveAIConstants::MILITARY_THREAT_MODERATE && bMilitaryPressureExists && (!bMilitaryAdvantage || kSummary.m_bAtWar || bRelevantMilitaryShortfall || bWorldMilitaryShortfall));
+	const bool bMilitaryDirectiveNeeded = bMilitaryDirectiveNeededRaw && !bOverwhelmingMilitaryCanStandDown && !bTreasuryShouldOverrideMilitary;
 	kDirective.m_bMilitaryProductionUrgent = bMilitaryDirectiveNeeded;
 
+	//MOD: Confirm noisy treasury/military primary-strategy candidates across turns before flipping the whole empire posture.
+	if(m_iStrategyDirectivePersistenceTurn != kSummary.m_iTurn)
+	{
+		m_iMilitaryDirectiveCandidateTurns = bMilitaryDirectiveNeeded ? (m_iMilitaryDirectiveCandidateTurns + 1) : 0;
+		m_iTreasuryRecoveryCandidateTurns = bGoldCritical ? (m_iTreasuryRecoveryCandidateTurns + 1) : 0;
+		m_iStrategyDirectivePersistenceTurn = kSummary.m_iTurn;
+	}
+	else
+	{
+		if(!bMilitaryDirectiveNeeded)
+		{
+			m_iMilitaryDirectiveCandidateTurns = 0;
+		}
+		if(!bGoldCritical)
+		{
+			m_iTreasuryRecoveryCandidateTurns = 0;
+		}
+	}
+	const bool bMilitaryPrimaryConfirmed = bMilitaryDirectiveNeeded && m_iMilitaryDirectiveCandidateTurns >= StrategyDirectiveAIConstants::PRIMARY_STRATEGY_CONFIRM_TURNS;
+	const bool bTreasuryPrimaryConfirmed = bGoldCritical && m_iTreasuryRecoveryCandidateTurns >= StrategyDirectiveAIConstants::PRIMARY_STRATEGY_CONFIRM_TURNS;
+	//END MOD
 
-	if(bMilitaryDirectiveNeeded)
+	if(bMilitaryPrimaryConfirmed)
 	{
 		kDirective.m_ePrimaryStrategy = PRIMARY_STRATEGY_MILITARY;
 	}
@@ -1785,7 +2222,7 @@ StrategyDirective CvGrandStrategyAI::BuildStrategyDirective(const GameStateSumma
 	{
 		kDirective.m_ePrimaryStrategy = PRIMARY_STRATEGY_HAPPINESS_RECOVERY;
 	}
-	else if(bGoldCritical)
+	else if(bTreasuryPrimaryConfirmed)
 	{
 		kDirective.m_ePrimaryStrategy = PRIMARY_STRATEGY_TREASURY_RECOVERY;
 	}
@@ -1843,6 +2280,8 @@ StrategyDirective CvGrandStrategyAI::BuildStrategyDirective(const GameStateSumma
 	kDirective.m_bAllowCapitalSettlerStrategy = !(kDirective.m_ePrimaryStrategy == PRIMARY_STRATEGY_HAPPINESS_RECOVERY ||
 		kDirective.m_ePrimaryStrategy == PRIMARY_STRATEGY_TREASURY_RECOVERY ||
 		kDirective.m_ePrimaryStrategy == PRIMARY_STRATEGY_MILITARY ||
+		kDirective.m_bGoldCritical ||
+		kDirective.m_bMilitaryProductionUrgent ||
 		kDirective.m_bLowHappiness ||
 		kDirective.m_bLowGold);
 
@@ -1866,6 +2305,9 @@ StrategyDirective CvGrandStrategyAI::BuildStrategyDirective(const GameStateSumma
 /// Runs every turn to determine what the player's Active Grand Strategy is and to change Priority Levels as necessary
 void CvGrandStrategyAI::DoTurn()
 {
+	//MOD: rebuild the strategy state after turn-level AI state updates
+	InvalidateStrategyState();
+	//END MOD
 	DoGuessOtherPlayersActiveGrandStrategy();
 
 	int iGrandStrategiesLoop;
@@ -2001,9 +2443,8 @@ void CvGrandStrategyAI::DoTurn()
 	LogGrandStrategies(viGrandStrategyChangeForLogging);
 
 	//MOD: log the experiment directive alongside vanilla grand-strategy processing
-	const GameStateSummary kSummary = BuildGameStateSummary();
-	const StrategyDirective kDirective = BuildStrategyDirective(kSummary);
-	LogStrategyDirective(kSummary, kDirective);
+	const StrategyState& kStrategyState = GetStrategyState();
+	LogStrategyDirective(kStrategyState.m_kSummary, kStrategyState.m_kDirective);
 }
 
 /// Returns Priority for Conquest Grand Strategy
@@ -2407,6 +2848,9 @@ void CvGrandStrategyAI::SetActiveGrandStrategy(AIGrandStrategyTypes eGrandStrate
 	if(eGrandStrategy != NO_AIGRANDSTRATEGY)
 	{
 		m_eActiveGrandStrategy = eGrandStrategy;
+		//MOD: active grand strategy feeds the strategy state
+		InvalidateStrategyState();
+		//END MOD
 
 		SetNumTurnsSinceActiveSet(0);
 	}
@@ -2786,6 +3230,7 @@ void CvGrandStrategyAI::LogStrategyDirective(const GameStateSummary& kSummary, c
 
 	// Always write this project diagnostic log; vanilla AI logs remain controlled by config.
 	{
+		CvString strHeader;
 		CvString strOutBuf;
 		CvString playerName;
 		CvString strLogName;
@@ -2802,63 +3247,63 @@ void CvGrandStrategyAI::LogStrategyDirective(const GameStateSummary& kSummary, c
 		}
 
 		FILogFile* pLog;
-		pLog = LOGFILEMGR.GetLog(strLogName, FILogFile::kDontTimeStamp, "Turn, Player, Primary, LowHappiness, LowGold, GoldCritical, ExpansionTargetAvailable, ExpansionRoomAvailable, CanConsiderExpansion, EarlyExpansionPhase, RecentExpansion, StrongExpansionWindow, BoxedIn, NearbyThreat, MilitaryProductionUrgent, MilitaryThreatSeverity, CoastalOpportunity, CityFocusLocked, ForceAvoidGrowth, CityFocus, Cities, Puppets, Population, ExcessHappiness, Gold, GPTx100, Science, MilitaryPctWorld, MilitaryPctRelevant, AtWarCount, HostileMajors, WarApproachMajors, RelevantMajors, LandDisputeMajors, StrongLandDisputeMajors, MajorMilitaryThreatCivs, IsCramped, TurnsSinceSettledLastCity, BestSettleAreaCount, UniqueLuxurySettleSiteCount, SettlersOnMap, EconomicEnoughExpansion, HasCoastalCity, BarbarianThreat, GeneralThreat, BarbarianThreatTotal, HighestThreat, MostThreatenedCityThreat, ActiveGrandStrategy");
+		AppendExperimentAnalysisLog(strHeader, strOutBuf, "Turn", kSummary.m_iTurn);
+		AppendExperimentAnalysisLog(strHeader, strOutBuf, "Player", playerName.c_str());
+		AppendExperimentAnalysisLog(strHeader, strOutBuf, "Primary", GetPrimaryStrategyDirectiveName(kDirective.m_ePrimaryStrategy));
+		AppendExperimentAnalysisLog(strHeader, strOutBuf, "LowHappiness", kDirective.m_bLowHappiness ? 1 : 0);
+		AppendExperimentAnalysisLog(strHeader, strOutBuf, "LowGold", kDirective.m_bLowGold ? 1 : 0);
+		AppendExperimentAnalysisLog(strHeader, strOutBuf, "GoldCritical", kDirective.m_bGoldCritical ? 1 : 0);
+		AppendExperimentAnalysisLog(strHeader, strOutBuf, "ExpansionTargetAvailable", kDirective.m_bExpansionTargetAvailable ? 1 : 0);
+		AppendExperimentAnalysisLog(strHeader, strOutBuf, "ExpansionRoomAvailable", kDirective.m_bExpansionRoomAvailable ? 1 : 0);
+		AppendExperimentAnalysisLog(strHeader, strOutBuf, "CanConsiderExpansion", kDirective.m_bCanConsiderExpansion ? 1 : 0);
+		AppendExperimentAnalysisLog(strHeader, strOutBuf, "EarlyExpansionPhase", kDirective.m_bEarlyExpansionPhase ? 1 : 0);
+		AppendExperimentAnalysisLog(strHeader, strOutBuf, "RecentExpansion", kDirective.m_bRecentExpansion ? 1 : 0);
+		AppendExperimentAnalysisLog(strHeader, strOutBuf, "StrongExpansionWindow", kDirective.m_bStrongExpansionWindow ? 1 : 0);
+		AppendExperimentAnalysisLog(strHeader, strOutBuf, "BoxedIn", kDirective.m_bBoxedIn ? 1 : 0);
+		AppendExperimentAnalysisLog(strHeader, strOutBuf, "NearbyThreat", kDirective.m_bNearbyThreat ? 1 : 0);
+		AppendExperimentAnalysisLog(strHeader, strOutBuf, "MilitaryProductionUrgent", kDirective.m_bMilitaryProductionUrgent ? 1 : 0);
+		AppendExperimentAnalysisLog(strHeader, strOutBuf, "MilitaryThreatSeverity", kDirective.m_iMilitaryThreatSeverity);
+		AppendExperimentAnalysisLog(strHeader, strOutBuf, "CoastalOpportunity", kDirective.m_bCoastalOpportunity ? 1 : 0);
+		AppendExperimentAnalysisLog(strHeader, strOutBuf, "CityFocusLocked", kDirective.m_bCityFocusLocked ? 1 : 0);
+		AppendExperimentAnalysisLog(strHeader, strOutBuf, "ForceAvoidGrowth", kDirective.m_bForceAvoidGrowth ? 1 : 0);
+		AppendExperimentAnalysisLog(strHeader, strOutBuf, "CityFocus", GetCityFocusTypeName(kDirective.m_eDefaultCityFocus));
+		AppendExperimentAnalysisLog(strHeader, strOutBuf, "Cities", kSummary.m_iNumCities);
+		AppendExperimentAnalysisLog(strHeader, strOutBuf, "Puppets", kSummary.m_iNumPuppetCities);
+		AppendExperimentAnalysisLog(strHeader, strOutBuf, "Population", kSummary.m_iTotalPopulation);
+		AppendExperimentAnalysisLog(strHeader, strOutBuf, "ExcessHappiness", kSummary.m_iExcessHappiness);
+		AppendExperimentAnalysisLog(strHeader, strOutBuf, "Gold", kSummary.m_iGold);
+		AppendExperimentAnalysisLog(strHeader, strOutBuf, "GPTx100", kSummary.m_iGoldPerTurnTimes100);
+		AppendExperimentAnalysisLog(strHeader, strOutBuf, "Science", kSummary.m_iSciencePerTurn);
+		AppendExperimentAnalysisLog(strHeader, strOutBuf, "MilitaryPctWorld", kSummary.m_iMilitaryPercentOfWorldAverage);
+		AppendExperimentAnalysisLog(strHeader, strOutBuf, "MilitaryPctRelevant", kSummary.m_iMilitaryPercentOfRelevantAverage);
+		AppendExperimentAnalysisLog(strHeader, strOutBuf, "AtWarCount", kSummary.m_iAtWarCount);
+		AppendExperimentAnalysisLog(strHeader, strOutBuf, "HostileMajors", kSummary.m_iHostileMajorCivs);
+		AppendExperimentAnalysisLog(strHeader, strOutBuf, "WarApproachMajors", kSummary.m_iWarApproachMajorCivs);
+		AppendExperimentAnalysisLog(strHeader, strOutBuf, "RelevantMajors", kSummary.m_iRelevantMajorCivs);
+		AppendExperimentAnalysisLog(strHeader, strOutBuf, "LandDisputeMajors", kSummary.m_iLandDisputeMajorCivs);
+		AppendExperimentAnalysisLog(strHeader, strOutBuf, "StrongLandDisputeMajors", kSummary.m_iStrongLandDisputeMajorCivs);
+		AppendExperimentAnalysisLog(strHeader, strOutBuf, "MajorMilitaryThreatCivs", kSummary.m_iMajorMilitaryThreatCivs);
+		AppendExperimentAnalysisLog(strHeader, strOutBuf, "IsCramped", kSummary.m_bIsCramped ? 1 : 0);
+		AppendExperimentAnalysisLog(strHeader, strOutBuf, "TurnsSinceSettledLastCity", kSummary.m_iTurnsSinceSettledLastCity);
+		AppendExperimentAnalysisLog(strHeader, strOutBuf, "BestSettleAreaCount", kSummary.m_iBestSettleAreaCount);
+		AppendExperimentAnalysisLog(strHeader, strOutBuf, "UniqueLuxurySettleSiteCount", kSummary.m_iUniqueLuxurySettleSiteCount);
+		AppendExperimentAnalysisLog(strHeader, strOutBuf, "SettlersOnMap", kSummary.m_iSettlersOnMap);
+		AppendExperimentAnalysisLog(strHeader, strOutBuf, "EconomicEnoughExpansion", kSummary.m_bEconomicEnoughExpansion ? 1 : 0);
+		AppendExperimentAnalysisLog(strHeader, strOutBuf, "HasCoastalCity", kSummary.m_bHasCoastalCity ? 1 : 0);
+		AppendExperimentAnalysisLog(strHeader, strOutBuf, "BarbarianThreat", kSummary.m_bBarbarianThreat ? 1 : 0);
+		AppendExperimentAnalysisLog(strHeader, strOutBuf, "GeneralThreat", kSummary.m_bGeneralThreat ? 1 : 0);
+		AppendExperimentAnalysisLog(strHeader, strOutBuf, "BarbarianThreatTotal", kSummary.m_iBarbarianThreatTotal);
+		AppendExperimentAnalysisLog(strHeader, strOutBuf, "HighestThreat", kSummary.m_iHighestThreat);
+		AppendExperimentAnalysisLog(strHeader, strOutBuf, "MostThreatenedCityThreat", kSummary.m_iMostThreatenedCityThreat);
+		AppendExperimentAnalysisLog(strHeader, strOutBuf, "ActiveGrandStrategy", (int)kSummary.m_eCurrentGrandStrategy);
 
-		strOutBuf.Format("%03d, %s, %s, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %s, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d",
-			kSummary.m_iTurn,
-			playerName.c_str(),
-			GetPrimaryStrategyDirectiveName(kDirective.m_ePrimaryStrategy),
-			kDirective.m_bLowHappiness ? 1 : 0,
-			kDirective.m_bLowGold ? 1 : 0,
-			kDirective.m_bGoldCritical ? 1 : 0,
-			kDirective.m_bExpansionTargetAvailable ? 1 : 0,
-			kDirective.m_bExpansionRoomAvailable ? 1 : 0,
-			kDirective.m_bCanConsiderExpansion ? 1 : 0,
-			kDirective.m_bEarlyExpansionPhase ? 1 : 0,
-			kDirective.m_bRecentExpansion ? 1 : 0,
-			kDirective.m_bStrongExpansionWindow ? 1 : 0,
-			kDirective.m_bBoxedIn ? 1 : 0,
-			kDirective.m_bNearbyThreat ? 1 : 0,
-			kDirective.m_bMilitaryProductionUrgent ? 1 : 0,
-			kDirective.m_iMilitaryThreatSeverity,
-			kDirective.m_bCoastalOpportunity ? 1 : 0,
-			kDirective.m_bCityFocusLocked ? 1 : 0,
-			kDirective.m_bForceAvoidGrowth ? 1 : 0,
-			GetCityFocusTypeName(kDirective.m_eDefaultCityFocus),
-			kSummary.m_iNumCities,
-			kSummary.m_iNumPuppetCities,
-			kSummary.m_iTotalPopulation,
-			kSummary.m_iExcessHappiness,
-			kSummary.m_iGold,
-			kSummary.m_iGoldPerTurnTimes100,
-			kSummary.m_iSciencePerTurn,
-			kSummary.m_iMilitaryPercentOfWorldAverage,
-			kSummary.m_iMilitaryPercentOfRelevantAverage,
-			kSummary.m_iAtWarCount,
-			kSummary.m_iHostileMajorCivs,
-			kSummary.m_iWarApproachMajorCivs,
-			kSummary.m_iRelevantMajorCivs,
-			kSummary.m_iLandDisputeMajorCivs,
-			kSummary.m_iStrongLandDisputeMajorCivs,
-			kSummary.m_iMajorMilitaryThreatCivs,
-			kSummary.m_bIsCramped ? 1 : 0,
-			kSummary.m_iTurnsSinceSettledLastCity,
-			kSummary.m_iBestSettleAreaCount,
-			kSummary.m_iUniqueLuxurySettleSiteCount,
-			kSummary.m_iSettlersOnMap,
-			kSummary.m_bEconomicEnoughExpansion ? 1 : 0,
-			kSummary.m_bHasCoastalCity ? 1 : 0,
-			kSummary.m_bBarbarianThreat ? 1 : 0,
-			kSummary.m_bGeneralThreat ? 1 : 0,
-			kSummary.m_iBarbarianThreatTotal,
-			kSummary.m_iHighestThreat,
-			kSummary.m_iMostThreatenedCityThreat,
-			(int)kSummary.m_eCurrentGrandStrategy);
+		pLog = LOGFILEMGR.GetLog(strLogName, FILogFile::kDontTimeStamp, strHeader);
 		pLog->Msg(strOutBuf);
 
 		LogExperimentStrategyAnalysis(GetPlayer(), kSummary, kDirective);
 		LogExperimentResearch(GetPlayer(), kSummary, kDirective);
 		LogExperimentCityProduction(GetPlayer(), kSummary, kDirective);
+		LogExperimentCodexDiagnostics(GetPlayer(), kSummary, kDirective);
 	}
 }
 //END MOD
