@@ -9,7 +9,7 @@ The core idea is:
 2. Select a `StrategyDirective` such as expansion, development, military response, treasury recovery, or happiness recovery.
 3. Apply scoped biases and/or hard pivots to existing AI subsystems (production, food, science, etc).
 
-Note: current source modifications only affect player 1 for testing purposes.
+Note: current source modifications only affect player 1 for testing purposes, and for now are only designed for Quick game speed. 
 
 ## Repository Layout
 
@@ -18,6 +18,7 @@ Note: current source modifications only affect player 1 for testing purposes.
 - `dev_build_install.cmd` is the main local build/install entrypoint.
 - `scripts/civ5_dll.ps1` contains the underlying build/install implementation.
 - `sample_logs/` contains small sample CSVs of AI behavior.
+- `Actions -> Civ5 Build -> specific run -> Artifacts` to download a specific build's DLL.
 
 
 ## Building
